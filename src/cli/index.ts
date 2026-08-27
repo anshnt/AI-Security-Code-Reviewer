@@ -6,6 +6,8 @@ import { CONFIG_PATHS, emptyRepoConfig, parseRepoConfig, type RepoConfig } from 
 import { HELP_TEXT, parseArgs, type CliOptions } from './args';
 import { collectFromDiff, collectFromPaths, type CollectResult } from './collect';
 import { countBlocking, renderJson, renderPretty, renderRules, shouldUseColor } from './report';
+import { renderSarif } from '../report/sarif';
+import { TOOL_NAME, TOOL_URI, TOOL_VERSION } from '../github/reviewer';
 
 /**
  * The local entry point.
@@ -85,11 +87,29 @@ export function run(argv: readonly string[]): number {
     scope: collected.scope,
   };
 
-  process.stdout.write(
-    `${options.format === 'json' ? renderJson(rescored, reportOptions) : renderPretty(rescored, reportOptions)}\n`,
-  );
+  process.stdout.write(renderReport(options.format, rescored, reportOptions));
 
   return countBlocking(rescored.findings, failOn) > 0 ? EXIT_FINDINGS : EXIT_CLEAN;
+}
+
+function renderReport(
+  format: CliOptions['format'],
+  summary: ScanSummary,
+  reportOptions: Parameters<typeof renderPretty>[1],
+): string {
+  if (format === 'sarif') {
+    // No trailing newline is added by renderSarif's caller: the document already
+    // ends in one, and a stray blank line breaks some SARIF consumers.
+    return renderSarif(summary.findings, {
+      toolName: TOOL_NAME,
+      toolVersion: TOOL_VERSION,
+      informationUri: TOOL_URI,
+      automationId: 'security-review/cli',
+      workingDirectory: `file://${process.cwd()}/`,
+    });
+  }
+  const text = format === 'json' ? renderJson(summary, reportOptions) : renderPretty(summary, reportOptions);
+  return `${text}\n`;
 }
 
 interface Collected extends CollectResult {

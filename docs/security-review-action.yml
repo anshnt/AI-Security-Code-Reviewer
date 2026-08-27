@@ -1,0 +1,65 @@
+# Run the reviewer as a GitHub Action, with no server to host.
+#
+# Copy this into `.github/workflows/security-review.yml` in the repository you
+# want reviewed. It scans only what the pull request changed and uploads the
+# result to code scanning, so findings appear in the Security tab with GitHub
+# handling alert tracking and dismissal.
+#
+# What this gives up compared to running the service: no pull-request comment,
+# no inline comments, no trend dashboard. What it gains: nothing to deploy.
+
+name: Security review
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  # Required to upload the SARIF run. Without it the upload is rejected and the
+  # step reports why rather than failing silently.
+  security-events: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A diff against the base needs more than the tip commit.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install the reviewer
+        run: npm install -g ai-security-code-reviewer
+
+      - name: Scan the changed lines
+        id: scan
+        # `--fail-on never` so the SARIF always uploads. Gating belongs to the
+        # code scanning alert rules or a branch protection rule, not to this
+        # step exiting non-zero before the upload runs.
+        run: |
+          security-review \
+            --diff "origin/${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}" \
+            --format sarif \
+            --fail-on never \
+            > results.sarif
+
+      - name: Upload to code scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+          # Distinguishes this analysis from others on the same commit.
+          category: security-review
+
+      # Optional: also fail the check directly, in addition to the Security tab.
+      - name: Fail on high severity or above
+        run: |
+          security-review \
+            --diff "origin/${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}" \
+            --fail-on high \
+            --quiet
