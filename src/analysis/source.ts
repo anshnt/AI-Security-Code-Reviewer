@@ -32,6 +32,10 @@ const EXTENSION_LANGUAGES: Record<string, Language> = {
   mdx: 'documentation',
   rst: 'documentation',
   adoc: 'documentation',
+  // An SVG is an image: its text nodes are labels, so line-scanning them for
+  // code sinks finds only the words in a diagram. The secrets rule still runs
+  // against it, because a credential embedded in an asset is still a credential.
+  svg: 'documentation',
   // `.txt` is deliberately absent: requirements.txt and constraints.txt are
   // dependency manifests, and classifying them as prose would stop the
   // dependency rule from ever seeing them.

@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 310" width="1200" height="310" role="img">
+  <rect width="1200" height="310" rx="12" fill="#fcfcfb"/>
+  <defs>
+    <marker id="arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#7a7873"/>
+    </marker>
+  </defs>
+  <rect x="24" y="96" width="190" height="104" rx="10" fill="#ffffff" stroke="#e6e5e1" stroke-width="1"/>
+  <rect x="24" y="107" width="3" height="82" rx="1.5" fill="#2a78d6"/>
+  <text x="42" y="122" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#0b0b0b">Pull request event</text>
+  <text x="42" y="144" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">HMAC verified against</text>
+  <text x="42" y="161" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">the raw request body</text>
+  <text x="42" y="178" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">before any parsing</text>
+  <rect x="254" y="96" width="190" height="104" rx="10" fill="#ffffff" stroke="#e6e5e1" stroke-width="1"/>
+  <rect x="254" y="107" width="3" height="82" rx="1.5" fill="#2a78d6"/>
+  <text x="272" y="122" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#0b0b0b">Diff and file fetch</text>
+  <text x="272" y="144" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">Changed lines from the</text>
+  <text x="272" y="161" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">patch, full file at head</text>
+  <text x="272" y="178" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">for surrounding context</text>
+  <rect x="484" y="52" width="214" height="192" rx="10" fill="#ffffff" stroke="#e6e5e1" stroke-width="1"/>
+  <rect x="484" y="63" width="3" height="170" rx="1.5" fill="#2a78d6"/>
+  <text x="502" y="78" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#0b0b0b">Six analyzers</text>
+  <text x="502" y="100" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">SQL injection</text>
+  <text x="502" y="117" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">Authentication</text>
+  <text x="502" y="134" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">Secrets</text>
+  <text x="502" y="151" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">Dependencies</text>
+  <text x="502" y="168" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">Authorization</text>
+  <text x="502" y="185" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">Dangerous APIs</text>
+  <text x="502" y="202" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e"></text>
+  <text x="502" y="219" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">plus a shared taint pass</text>
+  <rect x="738" y="96" width="190" height="104" rx="10" fill="#ffffff" stroke="#e6e5e1" stroke-width="1"/>
+  <rect x="738" y="107" width="3" height="82" rx="1.5" fill="#2a78d6"/>
+  <text x="756" y="122" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#0b0b0b">Rank and filter</text>
+  <text x="756" y="144" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">Severity by reachability,</text>
+  <text x="756" y="161" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">reported only on lines</text>
+  <text x="756" y="178" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">the author changed</text>
+  <rect x="968" y="24" width="208" height="74" rx="10" fill="#ffffff" stroke="#e6e5e1" stroke-width="1"/>
+  <rect x="968" y="35" width="3" height="52" rx="1.5" fill="#eb6834"/>
+  <text x="986" y="50" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#0b0b0b">Review comment</text>
+  <text x="986" y="72" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">One comment, kept</text>
+  <text x="986" y="89" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">up to date in place</text>
+  <rect x="968" y="114" width="208" height="74" rx="10" fill="#ffffff" stroke="#e6e5e1" stroke-width="1"/>
+  <rect x="968" y="125" width="3" height="52" rx="1.5" fill="#eb6834"/>
+  <text x="986" y="140" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#0b0b0b">Commit status</text>
+  <text x="986" y="162" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">Fails at your chosen</text>
+  <text x="986" y="179" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">severity, gates merge</text>
+  <rect x="968" y="204" width="208" height="74" rx="10" fill="#ffffff" stroke="#e6e5e1" stroke-width="1"/>
+  <rect x="968" y="215" width="3" height="52" rx="1.5" fill="#eb6834"/>
+  <text x="986" y="230" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#0b0b0b">Trend dashboard</text>
+  <text x="986" y="252" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">Lifecycle recorded for</text>
+  <text x="986" y="269" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#52514e">over-time reporting</text>
+  <path d="M 214 148 L 250 148" stroke="#7a7873" stroke-width="1.5" fill="none" marker-end="url(#arrowhead)"/>
+  <path d="M 444 148 L 480 148" stroke="#7a7873" stroke-width="1.5" fill="none" marker-end="url(#arrowhead)"/>
+  <path d="M 698 148 L 734 148" stroke="#7a7873" stroke-width="1.5" fill="none" marker-end="url(#arrowhead)"/>
+  <path d="M 928 148 H 948 V 61 H 964" stroke="#7a7873" stroke-width="1.5" fill="none" marker-end="url(#arrowhead)"/>
+  <path d="M 948 148 H 964" stroke="#7a7873" stroke-width="1.5" fill="none" marker-end="url(#arrowhead)"/>
+  <path d="M 948 148 V 241 H 964" stroke="#7a7873" stroke-width="1.5" fill="none" marker-end="url(#arrowhead)"/>
+  <text x="600" y="288" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#7a7873">Rules read the whole file; findings are reported only on the changed lines</text>
+</svg>

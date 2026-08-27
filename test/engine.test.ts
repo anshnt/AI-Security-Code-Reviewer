@@ -219,3 +219,16 @@ describe('file-level suppression', () => {
     expect(scan([file('src/calc.ts', content)]).findings).toEqual([]);
   });
 });
+
+describe('asset handling', () => {
+  it('does not report code sinks in an SVG label', () => {
+    const svg = '<svg><text>eval(...)</text><text>yaml.load(...)</text></svg>';
+    expect(scan([file('docs/images/figure.svg', svg)]).findings).toEqual([]);
+  });
+
+  it('still reports a credential embedded in an SVG', () => {
+    const svg = '<svg><metadata>AKIAIOSFODNN7EXAMPLE</metadata></svg>';
+    const findings = scan([file('docs/images/figure.svg', svg)]).findings;
+    expect(findings.map((f) => f.ruleId)).toContain('secrets/aws-access-key-id');
+  });
+});

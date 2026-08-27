@@ -17,7 +17,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc -p tsconfig.json --noEmit"
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "seed": "tsx scripts/seed-demo.ts --database data/demo.sqlite",
+    "diagrams": "tsx scripts/build-diagrams.ts"
   },
   "dependencies": {
     "@octokit/rest": "^21.1.1",

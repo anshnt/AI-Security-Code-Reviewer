@@ -6,6 +6,21 @@ findings as a single comment it keeps up to date, reports a commit status that c
 gate the merge, and records everything so a dashboard can show whether your
 vulnerability count is going up or down.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/dashboard-dark.png">
+  <img alt="Vulnerability trend dashboard: headline figures across the top, open findings per day, and findings introduced against findings resolved" src="docs/images/dashboard-light.png">
+</picture>
+
+<sub>The dashboard, with the sample history from `npm run seed`. Ninety days of a
+team finding a backlog and then working it down.</sub>
+
+## How it works
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/pipeline-dark.svg">
+  <img alt="Review pipeline: pull request event, diff and file fetch, six analyzers with a shared taint pass, rank and filter, then a review comment, a commit status and the trend dashboard" src="docs/images/pipeline-light.svg">
+</picture>
+
 ## What it looks for
 
 Six categories, each with its own analyzer:
@@ -42,11 +57,37 @@ straight-line assignments in the file. `eval(x)` is a high-severity finding;
 untrusted input - `fetch`, `exec`, `innerHTML` - are not reported at all without
 a taint signal.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/severity-matrix-dark.svg">
+  <img alt="Table showing how five dangerous APIs are scored across four taint strengths, from not reported through to critical" src="docs/images/severity-matrix-light.svg">
+</picture>
+
 **Findings are content-addressed.** Each one carries a fingerprint derived from
 the rule, the path and the normalised source text, so moving code or
 reformatting a file does not resurrect an issue that was already triaged, and
 the tool can tell you which findings this pull request *introduced* rather than
 just which ones exist.
+
+That fingerprint is what makes a lifecycle possible, and the lifecycle is what
+the trend charts are computed from:
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> Open: first detected
+    Open --> Open: detected again, recorded line updated
+    Open --> Resolved: examined line came back clean
+    Resolved --> Open: detected again
+    Resolved --> [*]
+```
+
+The middle transition is the one that is easy to get wrong. A pull-request scan
+only examines the lines the author touched, so "not detected this time" is not
+the same as "fixed" - a finding elsewhere in a touched file was simply never
+looked at. Resolution therefore requires that the finding's own line was inside
+the examined range, and line matching is exact: closing a finding that is still
+in the code costs the vulnerability, while leaving a stale one open costs a
+moment of attention.
 
 ## The dashboard
 
@@ -64,8 +105,34 @@ validator rather than by eye - severity uses a single-hue ordinal ramp because
 the obvious red-amber-green version is indistinguishable under the most common
 form of colour blindness.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/breakdown-dark.png">
+  <img alt="Two panels: open findings by severity on a single-hue ordinal ramp, and open findings by category" src="docs/images/breakdown-light.png">
+</picture>
+
 JSON is available at `/api/stats`, `/api/findings` and `/api/scans`, all
 accepting `?repo=` and `?days=`.
+
+### Try it without connecting a repository
+
+```bash
+npm install
+npm run seed                                        # writes data/demo.sqlite
+DATABASE_PATH=data/demo.sqlite ALLOW_INSECURE_WEBHOOK=true npm start
+```
+
+Then open <http://localhost:3000>. The generator is deterministic, so the same
+command always produces the same history - which is what makes the screenshots
+above reproducible rather than a one-off artefact. Pass `--days` and `--seed` to
+vary it. None of the data is real; it exists so the charts have something to
+show.
+
+The diagrams in this README are generated too, from one description per figure,
+so the light and dark variants cannot drift apart:
+
+```bash
+npm run diagrams
+```
 
 ## Running it
 
@@ -193,6 +260,12 @@ src/
     client.ts         Inline SVG charts
     theme.ts          Validated palette
   config.ts, server.ts, index.ts
+
+scripts/
+  seed-demo.ts        Deterministic sample history for the dashboard
+  build-diagrams.ts   Generates the README figures as light/dark SVG pairs
+
+docs/images/          Screenshots and generated figures
 ```
 
 ## Advisory data

@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 348" width="880" height="348" role="img">
+  <rect width="880" height="348" rx="12" fill="#1a1a19"/>
+  <defs>
+    <marker id="arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#95948b"/>
+    </marker>
+  </defs>
+  <text x="24" y="34" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#ffffff">Severity follows reachability, not the API name</text>
+  <text x="24" y="56" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#c3c2b7">How far the taint pass can trace the argument, left to right</text>
+  <text x="276" y="92" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#95948b">no signal</text>
+  <text x="444" y="92" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#95948b">name only</text>
+  <text x="612" y="92" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#95948b">traced variable</text>
+  <text x="780" y="92" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#95948b">reads the request</text>
+  <text x="28" y="129" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#ffffff">eval(...)</text>
+  <rect x="192" y="110" width="160" height="28" rx="6" fill="#86b6ef" stroke="#86b6ef" stroke-width="1"/>
+  <text x="272" y="129" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#232322">high</text>
+  <rect x="360" y="110" width="160" height="28" rx="6" fill="#86b6ef" stroke="#86b6ef" stroke-width="1"/>
+  <text x="440" y="129" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#232322">high</text>
+  <rect x="528" y="110" width="160" height="28" rx="6" fill="#b7d3f6" stroke="#b7d3f6" stroke-width="1"/>
+  <text x="608" y="129" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#232322">critical</text>
+  <rect x="696" y="110" width="160" height="28" rx="6" fill="#b7d3f6" stroke="#b7d3f6" stroke-width="1"/>
+  <text x="776" y="129" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#232322">critical</text>
+  <text x="28" y="169" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#ffffff">exec(...)</text>
+  <rect x="192" y="150" width="160" height="28" rx="6" fill="none" stroke="#383835" stroke-width="1"/>
+  <text x="272" y="169" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#95948b">not reported</text>
+  <rect x="360" y="150" width="160" height="28" rx="6" fill="#2b2b29" stroke="#383835" stroke-width="1"/>
+  <text x="440" y="169" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#c3c2b7">low confidence</text>
+  <rect x="528" y="150" width="160" height="28" rx="6" fill="#b7d3f6" stroke="#b7d3f6" stroke-width="1"/>
+  <text x="608" y="169" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#232322">critical</text>
+  <rect x="696" y="150" width="160" height="28" rx="6" fill="#b7d3f6" stroke="#b7d3f6" stroke-width="1"/>
+  <text x="776" y="169" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#232322">critical</text>
+  <text x="28" y="209" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#ffffff">fetch(url)</text>
+  <rect x="192" y="190" width="160" height="28" rx="6" fill="none" stroke="#383835" stroke-width="1"/>
+  <text x="272" y="209" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#95948b">not reported</text>
+  <rect x="360" y="190" width="160" height="28" rx="6" fill="#2b2b29" stroke="#383835" stroke-width="1"/>
+  <text x="440" y="209" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#c3c2b7">low confidence</text>
+  <rect x="528" y="190" width="160" height="28" rx="6" fill="#86b6ef" stroke="#86b6ef" stroke-width="1"/>
+  <text x="608" y="209" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#232322">high</text>
+  <rect x="696" y="190" width="160" height="28" rx="6" fill="#b7d3f6" stroke="#b7d3f6" stroke-width="1"/>
+  <text x="776" y="209" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#232322">critical</text>
+  <text x="28" y="249" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#ffffff">innerHTML =</text>
+  <rect x="192" y="230" width="160" height="28" rx="6" fill="none" stroke="#383835" stroke-width="1"/>
+  <text x="272" y="249" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#95948b">not reported</text>
+  <rect x="360" y="230" width="160" height="28" rx="6" fill="#2b2b29" stroke="#383835" stroke-width="1"/>
+  <text x="440" y="249" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#c3c2b7">low confidence</text>
+  <rect x="528" y="230" width="160" height="28" rx="6" fill="#86b6ef" stroke="#86b6ef" stroke-width="1"/>
+  <text x="608" y="249" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#232322">high</text>
+  <rect x="696" y="230" width="160" height="28" rx="6" fill="#b7d3f6" stroke="#b7d3f6" stroke-width="1"/>
+  <text x="776" y="249" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#232322">critical</text>
+  <text x="28" y="289" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#ffffff">yaml.load(...)</text>
+  <rect x="192" y="270" width="160" height="28" rx="6" fill="#b7d3f6" stroke="#b7d3f6" stroke-width="1"/>
+  <text x="272" y="289" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#232322">critical</text>
+  <rect x="360" y="270" width="160" height="28" rx="6" fill="#b7d3f6" stroke="#b7d3f6" stroke-width="1"/>
+  <text x="440" y="289" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#232322">critical</text>
+  <rect x="528" y="270" width="160" height="28" rx="6" fill="#b7d3f6" stroke="#b7d3f6" stroke-width="1"/>
+  <text x="608" y="289" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#232322">critical</text>
+  <rect x="696" y="270" width="160" height="28" rx="6" fill="#b7d3f6" stroke="#b7d3f6" stroke-width="1"/>
+  <text x="776" y="289" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#232322">critical</text>
+  <text x="24" y="330" text-anchor="start" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#95948b">A sink with no taint signal is either reported at its base severity or not at all, depending on the rule.</text>
+</svg>
