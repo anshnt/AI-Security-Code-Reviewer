@@ -273,6 +273,59 @@ explanations. The ones worth knowing:
 | `MAX_INLINE_COMMENTS` | `15` | Cap per review; the rest stay in the summary. |
 | `INLINE_MIN_SEVERITY` | `medium` | Severity floor for inline placement. |
 
+### Per-repository configuration
+
+Drop a `.securityreview.yml` at the repository root (or `.github/securityreview.yml`)
+to tune the reviewer for that codebase. `.securityreview.example.yml` in this
+repository documents every setting; the short version:
+
+```yaml
+version: 1
+paths:
+  exclude: [vendor/**, "**/*.generated.ts"]
+rules:
+  disable: [dangerous-api/insecure-temp-file]
+severity:
+  fail-on: medium
+  overrides:
+    dangerous-api/weak-cipher: low
+inline:
+  max-comments: 10
+```
+
+**The file is read from your base branch, never from the pull request head.**
+That is the one non-obvious rule and it is the important one. A config file on
+the head is *proposed*, not agreed — reading it would let any pull request
+disable the analyzer that is about to review it:
+
+```yaml
+# on the same branch that adds the hardcoded credential
+rules:
+  disable: [secrets]
+```
+
+Requiring a merge means requiring a review, which is the whole point of the
+mechanism. There is a test asserting a head-only config file is ignored.
+
+Two other properties worth knowing:
+
+- **A repository can tighten the merge gate, not loosen it.** `fail-on: medium`
+  when the service default is `high` is a team choosing to be stricter, and it is
+  honoured. `fail-on: never` is a team removing the gate from their own pull
+  requests, which is a decision for whoever runs the deployment — so it is
+  refused, and the refusal is reported in the comment. Triage is the same shape:
+  a repository may switch it off but not on, because turning it on spends the
+  service's credential.
+- **Mistakes are reported, not ignored.** Unknown keys, invalid severities,
+  out-of-range numbers and unparseable YAML all become warnings in the pull
+  request comment. A typo that silently disables a rule is a security hole with a
+  friendly face.
+
+Use `severity.overrides` rather than `rules.disable` when a rule matters *less*
+here but is still worth seeing — "lower priority" and "wrong" are different
+claims, and collapsing them into one switch means teams silence rules they only
+wanted to de-prioritise.
+
 ### Suppressing a finding
 
 When a rule is wrong about your code, say so in the code:
@@ -357,6 +410,10 @@ src/
     page.ts           Server-rendered HTML
     client.ts         Inline SVG charts
     theme.ts          Validated palette
+  config/
+    repo-config.ts    Parses and validates `.securityreview.yml`
+    merge.ts          Combines it with the service config
+    glob.ts           Dependency-free path matching
   config.ts, server.ts, index.ts
 
 scripts/

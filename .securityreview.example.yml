@@ -1,0 +1,69 @@
+# Per-repository configuration for the security reviewer.
+#
+# Copy this to `.securityreview.yml` at the repository root (or
+# `.github/securityreview.yml`) and delete what you do not need. Every setting is
+# optional; anything omitted keeps the service default.
+#
+# IMPORTANT: this file is read from your BASE branch, never from a pull request
+# head. A config change therefore has to be merged - and so reviewed - before it
+# takes effect. That is deliberate: reading it from the head would let any pull
+# request disable the analyzer that is about to review it.
+#
+# Mistakes are reported in the pull request comment rather than ignored, so a
+# typo will tell you about itself on the next review.
+
+version: 1
+
+paths:
+  # Skipped entirely. Supports *, **, ? and {a,b}. A pattern without a slash
+  # matches by filename anywhere in the tree.
+  exclude:
+    - vendor/**
+    - third_party/**
+    - "**/*.generated.ts"
+    - "*.min.js"
+
+  # When set, ONLY these paths are scanned. Leave it out to scan everything
+  # except the exclusions above.
+  # include:
+  #   - src/**
+
+  # Test and fixture paths are skipped by default, because they legitimately
+  # contain fake credentials and deliberately unsafe examples.
+  include-tests: false
+
+rules:
+  # Rule ids, or a whole category. Categories are: authentication,
+  # authorization, dangerous-api, dependencies, secrets, sql-injection.
+  disable:
+    - dangerous-api/insecure-temp-file
+
+severity:
+  # Findings below this are never reported.
+  min: low
+
+  # Severity at or above which the commit status fails, gating the merge.
+  # A repository may make this STRICTER than the service default, not looser -
+  # removing your own merge gate is a decision for whoever runs the service.
+  fail-on: high
+
+  # Replace the severity of specific rules or whole categories. Use this rather
+  # than `rules.disable` when a rule matters less here but is still worth
+  # seeing - "this is lower priority" and "this is wrong" are different claims.
+  overrides:
+    dangerous-api/weak-cipher: low
+    dependencies/unbounded-version-range: info
+
+inline:
+  # Comment on the changed lines as well as in the summary comment.
+  enabled: true
+  # Fifteen inline comments is a review; sixty is noise.
+  max-comments: 15
+  min-severity: medium
+
+triage:
+  # The model-assisted pass, if the service has one configured. A repository can
+  # switch it off but not on, since turning it on spends the service's credential.
+  enabled: true
+  # Sending fewer findings for review is the main cost dial.
+  min-severity: medium
