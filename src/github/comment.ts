@@ -1,4 +1,5 @@
 import { CATEGORY_LABELS, SEVERITIES, type Finding, type Severity } from '../analysis/types';
+import type { TriagedFinding, Verdict } from '../ai/triage';
 
 /**
  * PR comment rendering.
@@ -27,6 +28,22 @@ const SEVERITY_ICON: Record<Severity, string> = {
   info: '⚪',
 };
 
+export interface TriageSummary {
+  triagedCount: number;
+  refutedCount: number;
+  droppedRefuted: boolean;
+  model?: string;
+  error?: string;
+  durationMs: number;
+}
+
+const VERDICT_LABEL: Record<Verdict, string> = {
+  confirmed: 'Confirmed on review',
+  likely: 'Probably real',
+  unclear: 'Needs a human',
+  refuted: 'Judged a false positive',
+};
+
 export interface CommentOptions {
   repositoryFullName: string;
   headSha: string;
@@ -42,12 +59,20 @@ export interface CommentOptions {
   dashboardUrl?: string;
   /** Severity at which the commit status fails, for the "this blocks merge" note. */
   failOnSeverity: Severity | 'never';
+  /** Present when the triage pass ran. */
+  triage?: TriageSummary;
 }
 
-export function renderComment(findings: Finding[], options: CommentOptions): string {
+export function renderComment(findings: TriagedFinding[], options: CommentOptions): string {
   const parts: string[] = [COMMENT_MARKER];
 
-  if (findings.length === 0) {
+  // Refuted findings are reported separately: still visible, but not counted in
+  // the headline and not blocking, because presenting a judgement the tool
+  // itself believes is wrong alongside real findings devalues both.
+  const refuted = findings.filter((finding) => finding.triage?.verdict === 'refuted');
+  const active = findings.filter((finding) => finding.triage?.verdict !== 'refuted');
+
+  if (active.length === 0) {
     parts.push(
       '## Security review: no issues found',
       '',
@@ -62,15 +87,16 @@ export function renderComment(findings: Finding[], options: CommentOptions): str
           `${plural(options.resolvedCount, 'finding')}.`,
       );
     }
+    if (refuted.length > 0) parts.push('', renderRefuted(refuted));
     parts.push('', footer(options));
     return parts.join('\n');
   }
 
-  const counts = tally(findings);
-  const blocking = countBlocking(findings, options.failOnSeverity);
+  const counts = tally(active);
+  const blocking = countBlocking(active, options.failOnSeverity);
 
   parts.push(
-    `## Security review: ${findings.length} ${plural(findings.length, 'finding')}`,
+    `## Security review: ${active.length} ${plural(active.length, 'finding')}`,
     '',
     severityLine(counts),
     '',
@@ -84,7 +110,7 @@ export function renderComment(findings: Finding[], options: CommentOptions): str
     );
   }
 
-  const ordered = [...findings];
+  const ordered = [...active];
   const detailed = ordered.filter((finding) => finding.severity === 'critical' || finding.severity === 'high');
   const tabled = ordered.filter((finding) => finding.severity !== 'critical' && finding.severity !== 'high');
   const renderLimit = Math.max(1, options.maxRendered);
@@ -131,30 +157,91 @@ export function renderComment(findings: Finding[], options: CommentOptions): str
     );
   }
 
+  if (refuted.length > 0) parts.push(renderRefuted(refuted), '');
+
   parts.push(footer(options));
   return parts.join('\n');
 }
 
-function renderDetailed(finding: Finding, options: CommentOptions): string {
+/**
+ * The refuted set, collapsed. Each entry says what the analyzer thought and why
+ * the review pass disagreed, so a reader can overrule it without leaving the
+ * page.
+ */
+function renderRefuted(findings: TriagedFinding[]): string {
+  const lines: string[] = [
+    `<details><summary><b>${findings.length} ${plural(findings.length, 'finding')} judged a false positive on review</b></summary>`,
+    '',
+    'These matched a rule but the review pass concluded the surrounding code makes them harmless. ' +
+      'They do not block the merge. If one looks wrong to you, it probably is - the pass is a second ' +
+      'opinion, not the last word.',
+    '',
+  ];
+  for (const finding of findings) {
+    lines.push(
+      `**\`${escapeCell(finding.filePath)}:${finding.line}\`** - ${escapeCell(finding.title)}`,
+      '',
+      `> ${finding.triage?.reasoning ?? ''}`,
+      '',
+      `<sub>Rule: \`${finding.ruleId}\` · analyzer said ${finding.severity} ` +
+        `· review confidence ${finding.triage?.confidence ?? 'unknown'}</sub>`,
+      '',
+    );
+  }
+  lines.push('</details>');
+  return lines.join('\n');
+}
+
+function renderDetailed(finding: TriagedFinding, options: CommentOptions): string {
   const isNew = options.newFingerprints.has(finding.fingerprint);
+  const triage = finding.triage;
+
+  const meta = [
+    `\`${finding.filePath}:${finding.line}\``,
+    CATEGORY_LABELS[finding.category],
+    `**${finding.severity}** severity`,
+    `${finding.confidence} confidence`,
+  ];
+  if (triage) {
+    meta.push(
+      triage.severityChangedFrom
+        ? `${VERDICT_LABEL[triage.verdict]} (severity moved from ${triage.severityChangedFrom})`
+        : VERDICT_LABEL[triage.verdict],
+    );
+  }
+  if (isNew) meta.push('**introduced by this pull request**');
+  if (finding.cwe?.length) meta.push(finding.cwe.join(', '));
+
   const lines: string[] = [
     `### ${SEVERITY_ICON[finding.severity]} ${finding.title}`,
     '',
-    `\`${finding.filePath}:${finding.line}\` · ${CATEGORY_LABELS[finding.category]} · ` +
-      `**${finding.severity}** severity · ${finding.confidence} confidence` +
-      (isNew ? ' · **introduced by this pull request**' : '') +
-      (finding.cwe?.length ? ` · ${finding.cwe.join(', ')}` : ''),
+    meta.join(' · '),
     '',
     '```',
     finding.snippet,
     '```',
     '',
-    finding.description,
+    // The reviewed explanation talks about this code; the rule's talks about the
+    // category. Prefer the specific one and keep the general one available.
+    triage ? triage.reasoning : finding.description,
     '',
-    `**How to fix.** ${finding.remediation}`,
+    `**How to fix.** ${triage?.fix ?? finding.remediation}`,
   ];
 
-  if (finding.confidence === 'low') {
+  if (triage) {
+    lines.push(
+      '',
+      '<details><summary>What the rule says in general</summary>',
+      '',
+      finding.description,
+      '',
+      finding.remediation,
+      '',
+      '</details>',
+    );
+  }
+
+  if (!triage && finding.confidence === 'low') {
     lines.push(
       '',
       '_Low confidence: this rule detects a shape that is often but not always a bug. ' +
@@ -163,7 +250,12 @@ function renderDetailed(finding: Finding, options: CommentOptions): string {
     );
   }
 
-  lines.push('', `<sub>Rule: \`${finding.ruleId}\` · fingerprint \`${finding.fingerprint}\`</sub>`);
+  lines.push(
+    '',
+    `<sub>Rule: \`${finding.ruleId}\` · fingerprint \`${finding.fingerprint}\`` +
+      (triage ? ` · reviewed by \`${triage.model}\`` : '') +
+      '</sub>',
+  );
   return lines.join('\n');
 }
 
@@ -179,6 +271,20 @@ function footer(options: CommentOptions): string {
     `<sub>Reviewed \`${options.headSha.slice(0, 7)}\` · ${options.filesScanned} ` +
       `${plural(options.filesScanned, 'file')} · ${formatDuration(options.durationMs)}`,
   ];
+  if (options.triage) {
+    const triage = options.triage;
+    if (triage.error) {
+      // Say so rather than letting the review look un-triaged for no reason.
+      bits.push(` · review pass unavailable (${triage.error})`);
+    } else if (triage.triagedCount > 0) {
+      bits.push(
+        ` · ${triage.triagedCount} ${plural(triage.triagedCount, 'finding')} reviewed` +
+          (triage.refutedCount > 0
+            ? `, ${triage.refutedCount} judged ${triage.droppedRefuted ? 'a false positive and dropped' : 'a false positive'}`
+            : ''),
+      );
+    }
+  }
   if (options.dashboardUrl) {
     const url = `${options.dashboardUrl}/?repo=${encodeURIComponent(options.repositoryFullName)}`;
     bits.push(` · [vulnerability trends](${url})`);
@@ -195,15 +301,18 @@ export function tally(findings: Finding[]): Record<Severity, number> {
 
 const RANK: Record<Severity, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
 
-export function countBlocking(findings: Finding[], failOn: Severity | 'never'): number {
+export function countBlocking(findings: TriagedFinding[], failOn: Severity | 'never'): number {
   if (failOn === 'never') return 0;
-  return findings.filter((finding) => RANK[finding.severity] <= RANK[failOn]).length;
+  return findings.filter(
+    (finding) => finding.triage?.verdict !== 'refuted' && RANK[finding.severity] <= RANK[failOn],
+  ).length;
 }
 
 /** One-line summary for the commit status, which GitHub truncates at 140 characters. */
-export function renderStatusDescription(findings: Finding[], failOn: Severity | 'never'): string {
-  if (findings.length === 0) return 'No security findings on the changed lines';
-  const counts = tally(findings);
+export function renderStatusDescription(findings: TriagedFinding[], failOn: Severity | 'never'): string {
+  const active = findings.filter((finding) => finding.triage?.verdict !== 'refuted');
+  if (active.length === 0) return 'No security findings on the changed lines';
+  const counts = tally(active);
   const shown = SEVERITIES.filter((severity) => counts[severity] > 0)
     .map((severity) => `${counts[severity]} ${severity}`)
     .join(', ');

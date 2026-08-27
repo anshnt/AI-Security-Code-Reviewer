@@ -89,6 +89,63 @@ the examined range, and line matching is exact: closing a finding that is still
 in the code costs the vulnerability, while leaving a stale one open costs a
 moment of attention.
 
+## Model-assisted triage
+
+The analyzers answer "does this code match a dangerous shape?". That is the right
+question for a scanner and the wrong question for a reviewer, because the shape is
+often present and harmless: the ownership check lives two functions up, the
+interpolated value is a compile-time constant, the `exec` argument comes from a
+config file. An optional second pass reads the surrounding code and answers the
+question you actually care about.
+
+For each finding it returns a verdict, an explanation written in terms of your
+code, and a fix that names your variables:
+
+| Verdict | Effect |
+| --- | --- |
+| **confirmed** | Reachable and real. Rendered with the reviewed explanation in place of the rule's generic one. |
+| **likely** | Probably real, not provable from the excerpt. |
+| **unclear** | Not enough context to judge — flagged for a human rather than guessed at. |
+| **refuted** | The surrounding code makes it a non-issue. Moved out of the blocking set into a labelled section. |
+
+### It cannot make the review worse
+
+That constraint drove most of the design.
+
+- **A refuted finding is not deleted.** It moves into a collapsed section with the
+  reasoning, and stops blocking the merge — so a wrong refutation costs attention,
+  not a missed vulnerability. `AI_DROP_REFUTED=true` changes that once you trust
+  the pass on your codebase.
+- **Severity moves by at most one step, and only on a high-confidence verdict.**
+  Without the cap, one confident-sounding response could turn a critical injection
+  into an informational note.
+- **Any failure is a no-op.** A missing key, a 500, a timeout, a malformed
+  response, an invented fingerprint — every one of these leaves the deterministic
+  findings exactly as they were, and the comment says the pass did not run rather
+  than quietly looking un-triaged.
+- **Findings the model cannot usefully judge are never sent.** A provider-format
+  credential match is decided by the format itself, and judging it would mean
+  sending the credential somewhere.
+
+### What leaves your network
+
+Enabling this sends source code to a third-party API. That is your decision to
+make; the amount and content is ours to control.
+
+- Only a **bounded window** around each finding, merged per file so a cluster does
+  not send the same lines repeatedly. Never whole files.
+- Every excerpt is **scrubbed** first: provider token formats, credential
+  assignments and connection-string passwords are replaced with `[redacted]`,
+  whether or not the secrets rule flagged them. The integration tests assert on
+  the actual request body — an AWS key four lines above a flagged query does not
+  appear in the payload.
+- Only findings at or above `AI_MIN_SEVERITY`, capped at `AI_MAX_FINDINGS` per
+  review.
+
+Set `AI_BASE_URL` to route through your own gateway. Triage is off unless both
+`ANTHROPIC_API_KEY` and `AI_MODEL` are set; a half-configured setup is reported
+at startup rather than failing silently.
+
 ## The dashboard
 
 `GET /` renders vulnerability trends: open findings per day, findings introduced
@@ -179,6 +236,9 @@ explanations. The ones worth knowing:
 | `DISABLED_RULES` | *(empty)* | Comma-separated rule IDs or category names to skip. |
 | `INCLUDE_TESTS` | `false` | Whether test and fixture paths are scanned. |
 | `MAX_FILES_PER_PR` | `300` | Pull requests above this are skipped rather than reviewed badly. |
+| `AI_MODEL` | *(unset)* | Model identifier, or `auto`. With `ANTHROPIC_API_KEY`, enables triage. |
+| `AI_MIN_SEVERITY` | `medium` | Severity floor for triage - the main cost dial. |
+| `AI_DROP_REFUTED` | `false` | Whether a refuted finding is removed rather than labelled. |
 
 ### Suppressing a finding
 
@@ -247,6 +307,10 @@ src/
     taint.ts          Shared single-file taint reasoning
     advisories.ts     Offline advisory snapshot and version comparison
     rules/            One analyzer per category
+  ai/
+    client.ts         Model access and `auto` model resolution
+    excerpt.ts        Bounded, credential-scrubbed code excerpts
+    triage.ts         The triage pass, its schema and its guardrails
   github/
     webhook.ts        Signature verification and event routing
     client.ts         REST wrapper
