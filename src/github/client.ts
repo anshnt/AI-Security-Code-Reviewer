@@ -19,6 +19,19 @@ export interface PullRequestFile {
   sha: string;
 }
 
+export interface ReviewComment {
+  path: string;
+  /** Line in the post-change file. */
+  line: number;
+  body: string;
+}
+
+export interface ExistingReviewComment {
+  id: number;
+  path: string;
+  body: string;
+}
+
 export interface PullRequestInfo {
   number: number;
   title: string;
@@ -144,6 +157,84 @@ export class GitHubClient {
       body,
     });
     return { id: data.id, updated: false };
+  }
+
+  /**
+   * Review comments already on this pull request, so a re-push does not repeat
+   * itself. GitHub keeps review comments forever - it only marks them outdated
+   * when the line moves - so the reviewer has to deduplicate rather than relying
+   * on the platform.
+   */
+  async listReviewComments(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+  ): Promise<ExistingReviewComment[]> {
+    const comments = await this.octokit.paginate(this.octokit.pulls.listReviewComments, {
+      owner,
+      repo,
+      pull_number: pullNumber,
+      per_page: 100,
+    });
+    return comments.map((comment) => ({
+      id: comment.id,
+      path: comment.path,
+      body: comment.body ?? '',
+    }));
+  }
+
+  /**
+   * Posts inline comments as a single review.
+   *
+   * One review rather than N standalone comments, for two reasons: it is one
+   * notification instead of N, and GitHub rejects the whole review if any
+   * comment is unanchorable, which surfaces the problem instead of silently
+   * dropping findings.
+   *
+   * Returns the number of comments posted, or `null` when GitHub refused the
+   * review - which happens when a line is not part of the diff GitHub is
+   * willing to show, typically because the file is too large. Callers fall back
+   * to the summary comment rather than losing the findings.
+   */
+  async createReviewWithComments(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+    commitId: string,
+    comments: ReviewComment[],
+  ): Promise<number | null> {
+    if (comments.length === 0) return 0;
+    try {
+      await this.octokit.pulls.createReview({
+        owner,
+        repo,
+        pull_number: pullNumber,
+        commit_id: commitId,
+        // COMMENT, never REQUEST_CHANGES: blocking a merge is the commit
+        // status's job, and a changes-requested review from a bot has to be
+        // dismissed by a human before anything can merge.
+        event: 'COMMENT',
+        comments: comments.map((comment) => ({
+          path: comment.path,
+          line: comment.line,
+          side: 'RIGHT',
+          body: comment.body,
+        })),
+      });
+      return comments.length;
+    } catch (error) {
+      const status = (error as { status?: number }).status;
+      // 422 means at least one line was not commentable.
+      if (status === 422) {
+        logger.warn('inline review rejected', {
+          pullNumber,
+          comments: comments.length,
+          reason: (error as Error).message,
+        });
+        return null;
+      }
+      throw error;
+    }
   }
 
   /** Reports the review outcome as a commit status so it can gate merges. */
