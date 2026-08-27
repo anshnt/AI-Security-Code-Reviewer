@@ -34,6 +34,43 @@ export interface AppConfig {
     /** Skip pull requests touching more than this many files. */
     maxFilesPerPullRequest: number;
   };
+  ai: AiConfig;
+}
+
+export interface AiConfig {
+  /** Triage runs only when a credential and a model are both configured. */
+  enabled: boolean;
+  apiKey: string;
+  /** A model identifier, or `auto` to use the newest the credential can see. */
+  model: string;
+  baseUrl: string;
+  /** Only findings at or above this severity are sent. */
+  minSeverity: Severity;
+  /** Hard cap per review, so one pull request cannot run up a bill. */
+  maxFindings: number;
+  /** Lines of context sent on each side of a finding. */
+  contextLines: number;
+  /** Cap on excerpt lines per file. */
+  maxLinesPerFile: number;
+  effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  maxTokens: number;
+  timeoutMs: number;
+  maxRetries: number;
+  /**
+   * Whether a refuted finding is dropped from the review entirely.
+   *
+   * Off by default. A refutation is a judgement, and a wrong one would silently
+   * hide a real vulnerability - so by default a refuted finding is moved out of
+   * the blocking set into a clearly-labelled section where a human still sees
+   * it. Turn this on only once you trust the pass on your codebase.
+   */
+  dropRefuted: boolean;
+  /**
+   * Replacement HTTP transport for the model API. Not settable from the
+   * environment - it exists so an embedder can route through a proxy, and so
+   * tests can assert on exactly what would leave the process.
+   */
+  fetch?: typeof globalThis.fetch;
 }
 
 function readInt(name: string, fallback: number): number {
@@ -75,6 +112,7 @@ export function loadConfig(): AppConfig {
     storage: {
       databasePath: process.env.DATABASE_PATH ?? 'data/reviews.sqlite',
     },
+    ai: loadAiConfig(),
     review: {
       minSeverity: readSeverity('MIN_SEVERITY', 'low'),
       failOnSeverity: failOn === 'never' ? 'never' : readSeverity('FAIL_ON_SEVERITY', 'high'),
@@ -88,11 +126,51 @@ export function loadConfig(): AppConfig {
   };
 }
 
+function readEffort(): AiConfig['effort'] {
+  const raw = (process.env.AI_EFFORT ?? 'high').toLowerCase();
+  const allowed: AiConfig['effort'][] = ['low', 'medium', 'high', 'xhigh', 'max'];
+  return (allowed as string[]).includes(raw) ? (raw as AiConfig['effort']) : 'high';
+}
+
+function loadAiConfig(): AiConfig {
+  const apiKey = process.env.ANTHROPIC_API_KEY ?? '';
+  const model = process.env.AI_MODEL ?? '';
+  return {
+    // Both halves are required. A key with no model, or a model with no key, is
+    // a half-finished setup and silently running with one is worse than not
+    // running at all.
+    enabled: readBool('AI_TRIAGE', Boolean(apiKey && model)) && Boolean(apiKey) && Boolean(model),
+    apiKey,
+    model,
+    baseUrl: process.env.AI_BASE_URL ?? '',
+    minSeverity: readSeverity('AI_MIN_SEVERITY', 'medium'),
+    maxFindings: readInt('AI_MAX_FINDINGS', 25),
+    contextLines: readInt('AI_CONTEXT_LINES', 25),
+    maxLinesPerFile: readInt('AI_MAX_LINES_PER_FILE', 220),
+    effort: readEffort(),
+    maxTokens: readInt('AI_MAX_TOKENS', 8000),
+    timeoutMs: readInt('AI_TIMEOUT_MS', 120_000),
+    maxRetries: readInt('AI_MAX_RETRIES', 2),
+    dropRefuted: readBool('AI_DROP_REFUTED', false),
+  };
+}
+
 /** Config problems that should stop the process rather than surface at request time. */
 export function validateConfig(config: AppConfig): string[] {
   const problems: string[] = [];
   if (!config.github.token) {
     problems.push('GITHUB_TOKEN is not set - the reviewer cannot read diffs or post comments.');
+  }
+  // A half-configured triage setup is the easy mistake to make, and it fails
+  // silently: reviews keep working, just without the pass the operator thinks
+  // they enabled. Say so at startup.
+  if (config.ai.apiKey && !config.ai.model) {
+    problems.push(
+      'ANTHROPIC_API_KEY is set but AI_MODEL is not, so triage is off. Set AI_MODEL to a model identifier, or to `auto`.',
+    );
+  }
+  if (config.ai.model && !config.ai.apiKey) {
+    problems.push('AI_MODEL is set but ANTHROPIC_API_KEY is not, so triage is off.');
   }
   if (!config.github.webhookSecret) {
     problems.push(
