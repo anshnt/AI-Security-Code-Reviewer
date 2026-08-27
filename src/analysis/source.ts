@@ -267,6 +267,15 @@ export interface FindingDraft {
   endLine?: number;
   evidence: string;
   cwe?: string[];
+  /**
+   * Extra text mixed into the fingerprint but not shown in the snippet.
+   *
+   * Needed when several distinct findings share one source line - four published
+   * advisories against the same dependency, for example. Without it they all
+   * fingerprint identically and the engine's deduplication silently keeps one,
+   * reporting a single advisory where four exist.
+   */
+  fingerprintExtra?: string;
 }
 
 /** Builds a complete `Finding` from the fields a rule actually cares about. */
@@ -289,6 +298,10 @@ export function makeFinding(
     ...(draft.endLine ? { endLine: draft.endLine } : {}),
     snippet,
     ...(draft.cwe ? { cwe: draft.cwe } : {}),
-    fingerprint: fingerprint(draft.ruleId, target.filePath, snippet),
+    fingerprint: fingerprint(
+      draft.ruleId,
+      target.filePath,
+      draft.fingerprintExtra ? `${snippet} ${draft.fingerprintExtra}` : snippet,
+    ),
   };
 }

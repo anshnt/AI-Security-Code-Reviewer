@@ -112,6 +112,31 @@ describe('renderComment', () => {
     expect(body).toContain('x\\|y.ts');
   });
 
+  it('says when the advisory lookup degraded, even on a clean review', () => {
+    // The dangerous case: a comment that reads "no dependency findings" when the
+    // dependency check only saw a snapshot.
+    const body = renderComment([], {
+      ...baseOptions,
+      degradedAdvisoryLookup: 'api.osv.dev responded 503',
+    });
+    expect(body).toContain('bundled advisory snapshot only');
+    expect(body).toContain('api.osv.dev responded 503');
+  });
+
+  it('says when the advisory lookup degraded alongside findings', () => {
+    const body = renderComment([finding()], {
+      ...baseOptions,
+      degradedAdvisoryLookup: 'timed out after 8000ms',
+    });
+    expect(body).toContain('bundled advisory snapshot only');
+    expect(body).toContain('timed out after 8000ms');
+  });
+
+  it('says nothing about advisories when the lookup worked', () => {
+    expect(renderComment([finding()], baseOptions)).not.toContain('advisory snapshot');
+    expect(renderComment([], baseOptions)).not.toContain('advisory snapshot');
+  });
+
   it('links to the dashboard when a public URL is configured', () => {
     const body = renderComment([], { ...baseOptions, dashboardUrl: 'https://review.example.com' });
     expect(body).toContain('https://review.example.com/?repo=acme%2Fapp');

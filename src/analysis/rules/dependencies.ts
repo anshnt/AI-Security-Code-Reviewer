@@ -5,6 +5,7 @@ import {
   rangeIsAffected,
   type Ecosystem,
 } from '../advisories';
+import { advisoryKey, type AdvisoryIndex } from '../osv';
 import { makeFinding } from '../source';
 import type { Finding, Rule, ScanTarget } from '../types';
 
@@ -23,6 +24,24 @@ import type { Finding, Rule, ScanTarget } from '../types';
  *   - an install hook, which executes on `npm install` before any code review
  *     of the dependency has happened.
  */
+
+/**
+ * Advisories supplied from outside the bundled snapshot, set before a scan.
+ *
+ * A module-level slot rather than a rule parameter because `Rule.check` is
+ * synchronous by design - the analyzers must not each be able to make network
+ * calls - while an advisory lookup is inherently asynchronous. The engine does
+ * the lookup once, up front, and hands the answer in.
+ */
+let injectedAdvisories: AdvisoryIndex = new Map();
+
+export function setInjectedAdvisories(index: AdvisoryIndex): void {
+  injectedAdvisories = index;
+}
+
+export function clearInjectedAdvisories(): void {
+  injectedAdvisories = new Map();
+}
 
 interface Manifest {
   ecosystem: Ecosystem;
@@ -187,6 +206,27 @@ const COMPOSER_MANIFEST: Manifest = {
 
 const MANIFESTS = [NPM_MANIFEST, PIP_MANIFEST, GO_MANIFEST, MAVEN_MANIFEST, GEM_MANIFEST, COMPOSER_MANIFEST];
 
+/**
+ * Every dependency a file declares, with its ecosystem.
+ *
+ * Exported so the engine can gather them for an advisory lookup before scanning,
+ * using exactly the same parsing the rule itself uses. Two parsers that disagree
+ * about what a manifest declares would produce advisories for packages the rule
+ * never checks.
+ */
+export function parseManifest(
+  target: ScanTarget,
+): { ecosystem: Ecosystem; name: string; range: string; line: number }[] {
+  const manifest = MANIFESTS.find((entry) => entry.matches(target.filePath));
+  if (!manifest) return [];
+  return manifest.parse(target).map((dependency) => ({
+    ecosystem: manifest.ecosystem,
+    name: dependency.name,
+    range: dependency.range,
+    line: dependency.line,
+  }));
+}
+
 /** Ranges with no upper bound at all. */
 const UNBOUNDED_RANGE = /^\s*(?:\*|x|latest|>=?[^,\s]*|)\s*$/i;
 /** Sources fetched from somewhere other than the registry. */
@@ -213,8 +253,16 @@ export const dependenciesRule: Rule = {
       if (!isRelevant(dependency.line)) continue;
 
       // --- Known advisories ------------------------------------------------
-      for (const advisory of advisoriesFor(manifest.ecosystem, dependency.name)) {
-        if (!rangeIsAffected(dependency.range, advisory)) continue;
+      // Injected advisories were looked up for the exact declared version, so
+      // the source has already decided the version is affected and there is no
+      // range check to redo. Bundled ones carry a fixed-version bound instead.
+      const injected = injectedAdvisories.get(advisoryKey(manifest.ecosystem, dependency.name)) ?? [];
+      const bundled = advisoriesFor(manifest.ecosystem, dependency.name).filter((advisory) =>
+        rangeIsAffected(dependency.range, advisory),
+      );
+      const seenIdentifiers = new Set(injected.map((advisory) => advisory.cve));
+
+      for (const advisory of [...injected, ...bundled.filter((a) => !seenIdentifiers.has(a.cve))]) {
         findings.push(
           makeFinding(target, 'dependencies', {
             ruleId: 'dependencies/known-vulnerable-version',
@@ -230,6 +278,10 @@ export const dependenciesRule: Rule = {
               'For a transitive dependency, use an override/resolution pin until the direct parent updates.',
             line: dependency.line,
             evidence: dependency.raw,
+            // Several advisories can name the same dependency on the same line;
+            // without the identifier they would fingerprint alike and all but
+            // one would be deduplicated away.
+            fingerprintExtra: advisory.cve,
             cwe: ['CWE-1395', 'CWE-1104'],
           }),
         );
