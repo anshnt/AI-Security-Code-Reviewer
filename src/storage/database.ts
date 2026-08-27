@@ -47,6 +47,15 @@ export interface PersistedFinding extends Finding {
   resolvedAt: string | null;
 }
 
+/** A finding plus whatever the triage pass concluded about it. */
+export interface RecordableFinding extends Finding {
+  triage?: {
+    verdict: string;
+    confidence: string;
+    model: string;
+  };
+}
+
 export interface RecordScanInput {
   repositoryFullName: string;
   pullRequestNumber: number | null;
@@ -56,7 +65,7 @@ export interface RecordScanInput {
   author: string | null;
   filesScanned: number;
   durationMs: number;
-  findings: Finding[];
+  findings: RecordableFinding[];
   /**
    * What this scan actually examined, including files that came back clean.
    *
@@ -86,7 +95,7 @@ export interface ExaminedFile {
 export interface RecordScanResult {
   scanId: number;
   /** Findings not previously seen on this repository. */
-  newFindings: Finding[];
+  newFindings: RecordableFinding[];
   /** Fingerprints that were open and are absent from this scan. */
   resolvedFingerprints: string[];
 }
@@ -134,6 +143,9 @@ CREATE TABLE IF NOT EXISTS findings (
   end_line      INTEGER,
   snippet       TEXT NOT NULL,
   cwe           TEXT,
+  verdict       TEXT,
+  triage_confidence TEXT,
+  triage_model  TEXT,
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -151,6 +163,7 @@ CREATE TABLE IF NOT EXISTS finding_state (
   line          INTEGER NOT NULL DEFAULT 0,
   title         TEXT NOT NULL,
   status        TEXT NOT NULL DEFAULT 'open',
+  verdict       TEXT,
   first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
   last_seen_at  TEXT NOT NULL DEFAULT (datetime('now')),
   resolved_at   TEXT,
@@ -160,6 +173,55 @@ CREATE TABLE IF NOT EXISTS finding_state (
 CREATE INDEX IF NOT EXISTS idx_state_status ON finding_state(repository_id, status);
 CREATE INDEX IF NOT EXISTS idx_state_first_seen ON finding_state(first_seen_at);
 `;
+
+/**
+ * Indexes that reference columns added after the first release.
+ *
+ * These have to run *after* the column migration, not as part of the schema: on
+ * a database created by an earlier version the column does not exist yet, and
+ * `CREATE INDEX` on a missing column is an error that would take the whole
+ * startup down.
+ */
+const LATE_INDEXES = `
+CREATE INDEX IF NOT EXISTS idx_state_verdict ON finding_state(repository_id, verdict);
+`;
+
+/**
+ * Columns added after the first release.
+ *
+ * `CREATE TABLE IF NOT EXISTS` does nothing to a table that already exists, so
+ * a database created by an earlier version keeps its old shape and every insert
+ * naming a new column fails. Adding them explicitly, ignoring the error when
+ * they are already present, is the smallest thing that upgrades in place - and
+ * an existing deployment's history is the one thing this tool cannot regenerate.
+ */
+const ADDED_COLUMNS: { column: string; inspect: string; alter: string }[] = [
+  {
+    column: 'verdict',
+    inspect: 'PRAGMA table_info(findings)',
+    alter: 'ALTER TABLE findings ADD COLUMN verdict TEXT',
+  },
+  {
+    column: 'triage_confidence',
+    inspect: 'PRAGMA table_info(findings)',
+    alter: 'ALTER TABLE findings ADD COLUMN triage_confidence TEXT',
+  },
+  {
+    column: 'triage_model',
+    inspect: 'PRAGMA table_info(findings)',
+    alter: 'ALTER TABLE findings ADD COLUMN triage_model TEXT',
+  },
+  {
+    column: 'line',
+    inspect: 'PRAGMA table_info(finding_state)',
+    alter: 'ALTER TABLE finding_state ADD COLUMN line INTEGER NOT NULL DEFAULT 0',
+  },
+  {
+    column: 'verdict',
+    inspect: 'PRAGMA table_info(finding_state)',
+    alter: 'ALTER TABLE finding_state ADD COLUMN verdict TEXT',
+  },
+];
 
 /**
  * Resolution requires an exact line match, deliberately.
@@ -224,7 +286,30 @@ export class ReviewStore {
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.db.exec(SCHEMA);
+    this.addMissingColumns();
+    this.db.exec(LATE_INDEXES);
     logger.debug('review store ready', { databasePath });
+  }
+
+  /**
+   * Brings an older database up to the current shape. Idempotent: a column that
+   * is already there is left alone.
+   */
+  private addMissingColumns(): void {
+    // Every statement above is a complete literal rather than a template
+    // assembled from parts. SQL identifiers cannot be bound as parameters, so
+    // DDL built by interpolation is the one place this codebase would otherwise
+    // have to do exactly what its own SQL-injection rule flags - and the rule is
+    // right to flag it, even when the inputs happen to be constants today.
+    for (const { column, inspect, alter } of ADDED_COLUMNS) {
+      const columns = this.db
+        .prepare<[], { name: string }>(inspect)
+        .all()
+        .map((row) => row.name);
+      if (columns.includes(column)) continue;
+      this.db.exec(alter);
+      logger.info('added column to existing database', { statement: alter });
+    }
   }
 
   close(): void {
@@ -304,14 +389,15 @@ export class ReviewStore {
       const insertFinding = this.db.prepare(
         `INSERT INTO findings (
            scan_id, repository_id, fingerprint, rule_id, category, severity, confidence,
-           title, description, remediation, file_path, line, end_line, snippet, cwe
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           title, description, remediation, file_path, line, end_line, snippet, cwe,
+           verdict, triage_confidence, triage_model
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       const upsertState = this.db.prepare(
         `INSERT INTO finding_state (
            repository_id, fingerprint, rule_id, category, severity, file_path, line, title,
-           status, first_seen_at, last_seen_at, resolved_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', datetime('now'), datetime('now'), NULL)
+           status, verdict, first_seen_at, last_seen_at, resolved_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, datetime('now'), datetime('now'), NULL)
          ON CONFLICT (repository_id, fingerprint) DO UPDATE SET
            last_seen_at = datetime('now'),
            status       = 'open',
@@ -319,7 +405,10 @@ export class ReviewStore {
            severity     = excluded.severity,
            file_path    = excluded.file_path,
            line         = excluded.line,
-           title        = excluded.title`,
+           title        = excluded.title,
+           -- Keep the last verdict rather than clearing it: a re-scan that did
+           -- not send this finding for triage has learned nothing new about it.
+           verdict      = COALESCE(excluded.verdict, finding_state.verdict)`,
       );
 
       for (const finding of input.findings) {
@@ -339,6 +428,9 @@ export class ReviewStore {
           finding.endLine ?? null,
           finding.snippet,
           finding.cwe ? finding.cwe.join(',') : null,
+          finding.triage?.verdict ?? null,
+          finding.triage?.confidence ?? null,
+          finding.triage?.model ?? null,
         );
         upsertState.run(
           repositoryId,
@@ -349,6 +441,7 @@ export class ReviewStore {
           finding.filePath,
           finding.line,
           finding.title,
+          finding.triage?.verdict ?? null,
         );
       }
 

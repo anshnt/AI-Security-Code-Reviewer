@@ -140,7 +140,18 @@ export class PullRequestReviewer {
       author: pullRequest.author,
       filesScanned: summary.filesScanned,
       durationMs: summary.durationMs,
-      findings: reviewed.findings,
+      findings: reviewed.findings.map((finding) => ({
+        ...finding,
+        ...(finding.triage
+          ? {
+              triage: {
+                verdict: finding.triage.verdict,
+                confidence: finding.triage.confidence,
+                model: finding.triage.model,
+              },
+            }
+          : {}),
+      })),
       examined: inputs.map((input) => ({
         path: input.filePath,
         lines: input.changedLines === null ? null : [...input.changedLines],

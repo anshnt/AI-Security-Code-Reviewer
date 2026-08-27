@@ -50,6 +50,24 @@ export interface Overview {
   medianOpenAgeDays: number | null;
 }
 
+export interface TriageAccuracy {
+  /** Findings the pass judged, over the window. */
+  judged: number;
+  byVerdict: Record<string, number>;
+  /** Share of judged findings the pass called a false positive, 0-1. */
+  refutationRate: number | null;
+  /** Rules refuted most often - the list worth acting on. */
+  noisiestRules: NoisyRule[];
+}
+
+export interface NoisyRule {
+  ruleId: string;
+  judged: number;
+  refuted: number;
+  /** 0-1. */
+  refutationRate: number;
+}
+
 export interface RuleCount {
   ruleId: string;
   category: Category;
@@ -279,6 +297,34 @@ const SQL = {
      LIMIT @limit`,
 
   knownRepositories: 'SELECT full_name FROM repositories ORDER BY full_name',
+
+  triageByVerdict: `
+    SELECT s.verdict AS verdict, COUNT(*) AS count
+      FROM finding_state s
+      JOIN repositories r ON r.id = s.repository_id
+     WHERE s.verdict IS NOT NULL
+       AND s.first_seen_at >= datetime('now', @since)
+       AND (@repo IS NULL OR r.full_name = @repo)
+     GROUP BY s.verdict`,
+
+  /**
+   * Refutation rate per rule, over rules with enough judgements to mean
+   * something. A rule refuted once out of one is not evidence; the HAVING
+   * clause is what stops the table filling up with noise about noise.
+   */
+  noisiestRules: `
+    SELECT s.rule_id AS ruleId,
+           COUNT(*) AS judged,
+           SUM(CASE WHEN s.verdict = 'refuted' THEN 1 ELSE 0 END) AS refuted
+      FROM finding_state s
+      JOIN repositories r ON r.id = s.repository_id
+     WHERE s.verdict IS NOT NULL
+       AND s.first_seen_at >= datetime('now', @since)
+       AND (@repo IS NULL OR r.full_name = @repo)
+     GROUP BY s.rule_id
+    HAVING judged >= @minJudged AND refuted > 0
+     ORDER BY (CAST(refuted AS REAL) / judged) DESC, refuted DESC
+     LIMIT @limit`,
 } as const;
 
 export function overview(store: ReviewStore, filter: StatsFilter): Overview {
@@ -417,6 +463,50 @@ export function recentScans(store: ReviewStore, filter: StatsFilter, limit = 15)
 export function openFindings(store: ReviewStore, filter: StatsFilter, limit = 50): OpenFindingRow[] {
   const params = { ...bindings(filter), limit };
   return store.connection.prepare<typeof params, OpenFindingRow>(SQL.openFindings).all(params);
+}
+
+/**
+ * How the triage pass is performing, and which rules it disagrees with most.
+ *
+ * The second half is the actionable part: a rule refuted on most of its
+ * findings is a rule to tune or disable, and without this number nobody would
+ * ever find out which one it is.
+ */
+export function triageAccuracy(
+  store: ReviewStore,
+  filter: StatsFilter,
+  minJudged = 3,
+  limit = 8,
+): TriageAccuracy {
+  const params = bindings(filter);
+  const rows = store.connection
+    .prepare<typeof params, { verdict: string; count: number }>(SQL.triageByVerdict)
+    .all(params);
+
+  const byVerdict: Record<string, number> = {};
+  let judged = 0;
+  for (const row of rows) {
+    byVerdict[row.verdict] = row.count;
+    judged += row.count;
+  }
+
+  const ruleParams = { ...params, minJudged, limit };
+  const noisiest = store.connection
+    .prepare<typeof ruleParams, { ruleId: string; judged: number; refuted: number }>(SQL.noisiestRules)
+    .all(ruleParams)
+    .map((row) => ({
+      ruleId: row.ruleId,
+      judged: row.judged,
+      refuted: row.refuted,
+      refutationRate: row.judged === 0 ? 0 : row.refuted / row.judged,
+    }));
+
+  return {
+    judged,
+    byVerdict,
+    refutationRate: judged === 0 ? null : (byVerdict.refuted ?? 0) / judged,
+    noisiestRules: noisiest,
+  };
 }
 
 export function knownRepositories(store: ReviewStore): string[] {

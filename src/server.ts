@@ -13,6 +13,7 @@ import {
   repositorySummaries,
   topRules,
   trend,
+  triageAccuracy,
   type StatsFilter,
 } from './storage/queries';
 import { logger } from './util/logger';
@@ -127,6 +128,7 @@ export function createServer(config: AppConfig): ServerParts {
       repositorySummaries: repositorySummaries(store),
       recentScans: recentScans(store, filter),
       openFindings: openFindings(store, filter, 25),
+      triage: triageAccuracy(store, filter),
     };
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
     response.setHeader('Cache-Control', 'no-store');
@@ -142,6 +144,7 @@ export function createServer(config: AppConfig): ServerParts {
       trend: trend(store, filter),
       topRules: topRules(store, filter),
       repositories: repositorySummaries(store),
+      triage: triageAccuracy(store, filter),
     });
   });
 

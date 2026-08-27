@@ -5,6 +5,7 @@ import type {
   RuleCount,
   ScanSummaryRow,
   TrendPoint,
+  TriageAccuracy,
   OpenFindingRow,
 } from '../storage/queries';
 import { CLIENT_SCRIPT } from './client';
@@ -19,6 +20,8 @@ export interface DashboardData {
   repositorySummaries: RepositorySummary[];
   recentScans: ScanSummaryRow[];
   openFindings: OpenFindingRow[];
+  /** Absent when the triage pass has never run. */
+  triage?: TriageAccuracy;
 }
 
 const WINDOWS = [7, 14, 30, 90, 180];
@@ -120,6 +123,15 @@ export function renderDashboard(data: DashboardData): string {
       'of currently open findings',
     )}
     ${tile('Reviews run', String(overview.scansInWindow), `${overview.repositoriesTracked} repositories tracked`)}
+    ${
+      data.triage && data.triage.judged > 0
+        ? tile(
+            'Judged false positive',
+            `${Math.round((data.triage.refutationRate ?? 0) * 100)}%`,
+            `of ${data.triage.judged} reviewed on the changed lines`,
+          )
+        : ''
+    }
   </section>
 
   <section class="panel">
@@ -223,6 +235,31 @@ export function renderDashboard(data: DashboardData): string {
       }
     </section>
   </div>
+
+  ${
+    data.triage && data.triage.noisiestRules.length > 0
+      ? `<section class="panel">
+    <h2>Rules the review pass disagrees with most</h2>
+    <p>A rule refuted on most of its findings is a rule to tune or switch off in
+    <code>.securityreview.yml</code>. Only rules with at least three judgements appear here,
+    because one refutation out of one is not evidence.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th scope="col">Rule</th><th scope="col">Refuted</th><th scope="col">Judged</th><th scope="col">Rate</th></tr></thead>
+      <tbody>
+        ${data.triage.noisiestRules
+          .map(
+            (rule) => `<tr>
+          <td><code>${escapeHtml(rule.ruleId)}</code></td>
+          <td>${rule.refuted}</td>
+          <td>${rule.judged}</td>
+          <td>${Math.round(rule.refutationRate * 100)}%</td>
+        </tr>`,
+          )
+          .join('\n        ')}
+      </tbody></table></div>
+  </section>`
+      : ''
+  }
 
   <section class="panel">
     <h2>Oldest open findings</h2>
