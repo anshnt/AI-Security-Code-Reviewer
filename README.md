@@ -119,6 +119,46 @@ A few properties worth knowing:
   the summary still carries every finding. Inline placement is convenience, not
   the record.
 
+## Running it locally
+
+A finding is cheapest to fix before it is pushed, and free to fix before it is
+written. The same analyzers, rule set and config file are available as a CLI:
+
+```bash
+npm install && npm run build
+
+npx security-review                        # scan the working tree
+npx security-review --diff origin/main     # scan only what this branch changed
+npx security-review src/ --fail-on critical
+npx security-review --format json | jq .
+npx security-review --list-rules
+```
+
+`--diff` reuses the same patch parser the pull-request reviewer uses, so what you
+see locally is what CI will report. A local check that disagrees with CI is worse
+than no local check, because it teaches people to distrust both.
+
+Exit status is the contract, and the three values are distinct on purpose:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Nothing at or above `--fail-on` |
+| `1` | Findings at or above `--fail-on` |
+| `2` | The command could not run |
+
+"Found problems" and "could not look" call for different responses in a
+pre-commit hook or a pipeline step, and collapsing them means a broken
+invocation reads as a clean run. For the same reason an unknown flag is an error
+rather than a warning: a mistyped `--fail-on` that is silently ignored turns a
+gate into a no-op.
+
+As a pre-commit hook:
+
+```bash
+#!/bin/sh
+npx security-review --diff HEAD --fail-on high --quiet
+```
+
 ## Model-assisted triage
 
 The analyzers answer "does this code match a dangerous shape?". That is the right
@@ -409,6 +449,11 @@ src/
     taint.ts          Shared single-file taint reasoning
     advisories.ts     Offline advisory snapshot and version comparison
     rules/            One analyzer per category
+  cli/
+    index.ts          Local entry point and exit-status contract
+    args.ts           Argument parsing and the help text
+    collect.ts        Working-tree walking and git-diff collection
+    report.ts         Terminal and JSON output
   ai/
     client.ts         Model access and `auto` model resolution
     excerpt.ts        Bounded, credential-scrubbed code excerpts
