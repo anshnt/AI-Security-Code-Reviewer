@@ -16,8 +16,8 @@
 
 import { createHash } from 'node:crypto';
 import { rmSync } from 'node:fs';
-import { ReviewStore } from '../src/storage/database';
-import type { Category, Finding, Severity } from '../src/analysis/types';
+import { ReviewStore, type RecordableFinding } from '../src/storage/database';
+import type { Category, Severity } from '../src/analysis/types';
 
 interface RuleTemplate {
   ruleId: string;
@@ -73,6 +73,31 @@ function demoFingerprint(repository: string, path: string, line: number, ruleId:
     .update(`${repository} ${path} ${line} ${ruleId}`)
     .digest('hex')
     .slice(0, 20);
+}
+
+/**
+ * Verdicts for the demo data. Two rules are deliberately noisy - a predictable
+ * temp file and a weak cipher are the classic findings that are usually fine in
+ * context - so the accuracy panel has a real pattern to point at rather than
+ * uniform noise.
+ */
+const NOISY_RULES = new Set([
+  'dangerous-api/insecure-temp-file',
+  'dangerous-api/weak-cipher',
+  'dependencies/unbounded-version-range',
+]);
+
+function pickVerdict(ruleId: string, random: () => number): string {
+  const roll = random();
+  if (NOISY_RULES.has(ruleId)) {
+    if (roll < 0.6) return 'refuted';
+    if (roll < 0.8) return 'unclear';
+    return 'likely';
+  }
+  if (roll < 0.08) return 'refuted';
+  if (roll < 0.2) return 'unclear';
+  if (roll < 0.55) return 'likely';
+  return 'confirmed';
 }
 
 /** Deterministic LCG, so a given seed always yields the same history. */
@@ -204,7 +229,7 @@ function main(): void {
           });
         }
 
-        const findings: Finding[] = [];
+        const findings: RecordableFinding[] = [];
         const findingCount = Math.floor(random() * 2.6 * pressure);
         const seenThisScan = new Set<string>();
         for (let index = 0; index < findingCount; index += 1) {
@@ -227,6 +252,18 @@ function main(): void {
             line,
             snippet: '(demonstration data - no real source code)',
             fingerprint: demoFingerprint(repository.fullName, hunk.path, line, rule.ruleId),
+            // Some findings carry a triage verdict, so the accuracy panel has
+            // something to show. Noisier rules get refuted more often, which is
+            // the pattern that panel exists to surface.
+            ...(random() < 0.55
+              ? {
+                  triage: {
+                    verdict: pickVerdict(rule.ruleId, random),
+                    confidence: random() < 0.7 ? 'high' : 'medium',
+                    model: 'demonstration-model',
+                  },
+                }
+              : {}),
           });
         }
 

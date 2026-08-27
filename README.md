@@ -176,6 +176,22 @@ Set `AI_BASE_URL` to route through your own gateway. Triage is off unless both
 `ANTHROPIC_API_KEY` and `AI_MODEL` are set; a half-configured setup is reported
 at startup rather than failing silently.
 
+### Which rules are actually noisy
+
+Every verdict is recorded, which turns the pass into a measurement of the
+analyzers rather than just a filter over them. The dashboard shows the overall
+refutation rate and, more usefully, ranks the rules the pass disagrees with most:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/triage-accuracy-dark.png">
+  <img alt="Table ranking rules by how often the review pass refuted them, with refuted, judged and rate columns" src="docs/images/triage-accuracy-light.png">
+</picture>
+
+A rule refuted on most of its findings is a rule to tune or switch off in
+`.securityreview.yml` — and without this number nobody would ever find out which
+one it is. Only rules with at least three judgements appear, because one
+refutation out of one is not evidence.
+
 ## The dashboard
 
 `GET /` renders vulnerability trends: open findings per day, findings introduced
