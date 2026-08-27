@@ -118,7 +118,7 @@ export const CLIENT_SCRIPT = String.raw`
     // Selective direct label: the final value only, never one per point.
     var last = trend[trend.length - 1];
     var endLabel = svgEl('text', {
-      x: x(trend.length - 1), y: y(last.open) - 12, 'text-anchor': 'end', class: 'end-label'
+      x: x(trend.length - 1), y: y(last.open) - 18, 'text-anchor': 'end', class: 'end-label'
     });
     endLabel.textContent = last.open + ' open';
     svg.appendChild(endLabel);
