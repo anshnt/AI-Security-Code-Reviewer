@@ -52,7 +52,7 @@ describe('ReviewStore', () => {
       filesScanned: 2,
       durationMs: 120,
       findings,
-      scannedPaths: ['src/config.ts'],
+      examined: [{ path: 'src/config.ts', lines: null }],
     });
   }
 
@@ -94,7 +94,7 @@ describe('ReviewStore', () => {
       filesScanned: 1,
       durationMs: 5,
       findings: [],
-      scannedPaths: ['src/unrelated.ts'],
+      examined: [{ path: 'src/unrelated.ts', lines: null }],
     });
     expect(second.resolvedFingerprints).toEqual([]);
     expect(store.openFingerprints('acme/app').has('fp-1')).toBe(true);
@@ -120,7 +120,7 @@ describe('ReviewStore', () => {
       filesScanned: 1,
       durationMs: 10,
       findings: [],
-      scannedPaths: [],
+      examined: [],
     });
     expect(store.openFingerprints('acme/other').size).toBe(0);
     expect(store.openFingerprints('acme/app').size).toBe(1);
@@ -157,7 +157,7 @@ describe('dashboard queries', () => {
       author: 'ansh',
       filesScanned: 5,
       durationMs: 300,
-      scannedPaths: ['src/config.ts'],
+      examined: [{ path: 'src/config.ts', lines: null }],
       findings: [
         finding(),
         finding({ fingerprint: 'fp-2', severity: 'high', category: 'sql-injection', ruleId: 'sql-injection/interpolated-query', line: 11 }),
@@ -194,7 +194,7 @@ describe('dashboard queries', () => {
       filesScanned: 5,
       durationMs: 100,
       findings: [finding({ fingerprint: 'fp-9', line: 44 })],
-      scannedPaths: ['src/config.ts'],
+      examined: [{ path: 'src/config.ts', lines: null }],
     });
     const result = overview(store, { days: 30 });
     expect(result.resolvedInWindow).toBe(3);
@@ -256,5 +256,109 @@ describe('dateRange', () => {
     expect(range).toHaveLength(3);
     expect(range[2]).toBe(new Date().toISOString().slice(0, 10));
     expect(range[0]! < range[2]!).toBe(true);
+  });
+});
+
+describe('resolution scope', () => {
+  let store: ReviewStore;
+
+  beforeEach(() => {
+    store = new ReviewStore(':memory:');
+  });
+
+  afterEach(() => {
+    store.close();
+  });
+
+  function record(findings: Finding[], examined: { path: string; lines: number[] | null }[]) {
+    return store.recordScan({
+      repositoryFullName: 'acme/app',
+      pullRequestNumber: 1,
+      headSha: `sha-${Math.random()}`,
+      baseSha: 'base',
+      title: null,
+      author: null,
+      filesScanned: examined.length,
+      durationMs: 10,
+      findings,
+      examined,
+    });
+  }
+
+  const atLine = (line: number, fingerprint: string): Finding => ({
+    ruleId: 'dangerous-api/eval',
+    category: 'dangerous-api',
+    severity: 'high',
+    confidence: 'high',
+    title: 'Dynamic code evaluation',
+    description: 'd',
+    remediation: 'r',
+    filePath: 'src/app.ts',
+    line,
+    snippet: `eval(x${line})`,
+    fingerprint,
+  });
+
+  it('resolves a finding when the pull request examined its line', () => {
+    record([atLine(40, 'fp-40')], [{ path: 'src/app.ts', lines: [39, 40, 41] }]);
+    const second = record([], [{ path: 'src/app.ts', lines: [39, 40, 41] }]);
+    expect(second.resolvedFingerprints).toEqual(['fp-40']);
+  });
+
+  it('leaves a finding open when the pull request touched a different part of the file', () => {
+    record([atLine(40, 'fp-40')], [{ path: 'src/app.ts', lines: [39, 40, 41] }]);
+    // This push edits line 200. Line 40 was never examined, so the finding
+    // there is unobserved, not fixed.
+    const second = record([], [{ path: 'src/app.ts', lines: [199, 200, 201] }]);
+    expect(second.resolvedFingerprints).toEqual([]);
+    expect(store.openFingerprints('acme/app').has('fp-40')).toBe(true);
+  });
+
+  it('errs toward leaving a finding open when a nearby line was edited', () => {
+    record([atLine(40, 'fp-40')], [{ path: 'src/app.ts', lines: [40] }]);
+    // Editing line 42 says nothing about line 40. Closing it here would hide a
+    // live finding; leaving it open only costs a moment of attention.
+    const second = record([], [{ path: 'src/app.ts', lines: [42] }]);
+    expect(second.resolvedFingerprints).toEqual([]);
+    expect(store.openFingerprints('acme/app').has('fp-40')).toBe(true);
+  });
+
+  it('re-observing a finding updates its recorded line, so drift self-corrects', () => {
+    record([atLine(40, 'fp-40')], [{ path: 'src/app.ts', lines: [40] }]);
+    // The same finding is seen again, two lines lower after an insertion above.
+    const moved: Finding = { ...atLine(42, 'fp-40'), snippet: 'eval(x40)' };
+    record([moved], [{ path: 'src/app.ts', lines: [42] }]);
+    // A later fix at the new location now resolves it.
+    const third = record([], [{ path: 'src/app.ts', lines: [42] }]);
+    expect(third.resolvedFingerprints).toEqual(['fp-40']);
+  });
+
+  it('resolves anything in the file when the whole file was examined', () => {
+    record(
+      [atLine(40, 'fp-40'), atLine(500, 'fp-500')],
+      [{ path: 'src/app.ts', lines: [40, 500] }],
+    );
+    const second = record([], [{ path: 'src/app.ts', lines: null }]);
+    expect(second.resolvedFingerprints.sort()).toEqual(['fp-40', 'fp-500']);
+  });
+
+  it('treats a reported finding as proof its own line was examined', () => {
+    // The caller declares no scope at all; the finding still implies one, so a
+    // different finding arriving at the same line resolves the old one.
+    record([atLine(40, 'fp-40')], []);
+    const second = record([atLine(40, 'fp-40-b')], []);
+    expect(second.resolvedFingerprints).toEqual(['fp-40']);
+  });
+
+  it('a finding elsewhere in the file does not vouch for an unexamined line', () => {
+    record([atLine(40, 'fp-40')], []);
+    const second = record([atLine(300, 'fp-300')], []);
+    expect(second.resolvedFingerprints).toEqual([]);
+  });
+
+  it('never resolves a finding in a file the scan did not open', () => {
+    record([atLine(40, 'fp-40')], [{ path: 'src/app.ts', lines: null }]);
+    const second = record([], [{ path: 'src/other.ts', lines: null }]);
+    expect(second.resolvedFingerprints).toEqual([]);
   });
 });

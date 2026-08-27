@@ -58,13 +58,29 @@ export interface RecordScanInput {
   durationMs: number;
   findings: Finding[];
   /**
-   * Every path this scan actually looked at, including the ones that came back
-   * clean. Resolution is decided from this, never from the paths that happened
-   * to produce findings - otherwise a pull request that *fixes* the only issue
-   * in a file would resolve nothing, because the file no longer appears in the
+   * What this scan actually examined, including files that came back clean.
+   *
+   * Resolution is decided from this rather than from the paths that happened to
+   * produce findings: a pull request that *fixes* the only issue in a file
+   * would otherwise resolve nothing, because the file no longer appears in the
    * finding list.
+   *
+   * The line granularity matters just as much. A pull-request scan reports only
+   * on the lines the author changed, so a pre-existing finding elsewhere in a
+   * touched file is not re-detected - not because it was fixed, but because
+   * nobody looked at it. Treating "file was scanned" as "file was fully
+   * examined" silently closes findings that are still in the code.
    */
-  scannedPaths: string[];
+  examined: ExaminedFile[];
+}
+
+export interface ExaminedFile {
+  path: string;
+  /**
+   * Lines examined in the post-change file, or `null` when the whole file was
+   * in scope (a newly added file, or a local full-tree scan).
+   */
+  lines: number[] | null;
 }
 
 export interface RecordScanResult {
@@ -132,6 +148,7 @@ CREATE TABLE IF NOT EXISTS finding_state (
   category      TEXT NOT NULL,
   severity      TEXT NOT NULL,
   file_path     TEXT NOT NULL,
+  line          INTEGER NOT NULL DEFAULT 0,
   title         TEXT NOT NULL,
   status        TEXT NOT NULL DEFAULT 'open',
   first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -143,6 +160,58 @@ CREATE TABLE IF NOT EXISTS finding_state (
 CREATE INDEX IF NOT EXISTS idx_state_status ON finding_state(repository_id, status);
 CREATE INDEX IF NOT EXISTS idx_state_first_seen ON finding_state(first_seen_at);
 `;
+
+/**
+ * Resolution requires an exact line match, deliberately.
+ *
+ * A tolerance window looks appealing - an edit above a finding shifts its line
+ * number without changing the code - but it trades one error for a worse one.
+ * With slack, a pull request that edits line 42 would close an untouched
+ * finding at line 40, hiding a live vulnerability. Without it, a finding whose
+ * line drifted before anyone fixed it stays open one review longer than
+ * strictly necessary.
+ *
+ * Those two failure modes are not equally bad, so the asymmetry decides it:
+ * a stale open finding costs a moment of attention, a falsely closed one costs
+ * the vulnerability. Drift also self-corrects - the line is rewritten every
+ * time the finding is re-observed.
+ */
+
+interface ScanScope {
+  /** Whether this scan actually looked at the given location. */
+  examined(filePath: string, line: number): boolean;
+}
+
+function buildScope(input: RecordScanInput): ScanScope {
+  /** `null` in the map means the whole file was in scope. */
+  const byPath = new Map<string, Set<number> | null>();
+
+  const widen = (path: string, lines: number[] | null): void => {
+    if (byPath.get(path) === null) return; // already whole-file
+    if (lines === null) {
+      byPath.set(path, null);
+      return;
+    }
+    const existing = byPath.get(path) ?? new Set<number>();
+    for (const line of lines) existing.add(line);
+    byPath.set(path, existing);
+  };
+
+  for (const entry of input.examined) widen(entry.path, entry.lines);
+  // A reported finding proves its own line was examined, even if a caller
+  // forgot to declare the scope.
+  for (const finding of input.findings) widen(finding.filePath, [finding.line]);
+
+  return {
+    examined(filePath: string, line: number): boolean {
+      if (!byPath.has(filePath)) return false;
+      const lines = byPath.get(filePath);
+      if (lines === null) return true;
+      if (!lines) return false;
+      return lines.has(line);
+    },
+  };
+}
 
 export class ReviewStore {
   private readonly db: Database.Database;
@@ -189,16 +258,13 @@ export class ReviewStore {
   recordScan(input: RecordScanInput): RecordScanResult {
     const run = this.db.transaction((): RecordScanResult => {
       const repositoryId = this.repositoryId(input.repositoryFullName);
-      const scannedPaths = new Set([
-        ...input.scannedPaths,
-        // A finding always implies its file was scanned, even if a caller
-        // forgets to list it.
-        ...input.findings.map((finding) => finding.filePath),
-      ]);
+      const scope = buildScope(input);
 
       const previouslyOpen = this.db
-        .prepare<[number], { fingerprint: string; file_path: string }>(
-          "SELECT fingerprint, file_path FROM finding_state WHERE repository_id = ? AND status = 'open'",
+        .prepare<[number], { fingerprint: string; file_path: string; line: number }>(
+          `SELECT fingerprint, file_path, line
+             FROM finding_state
+            WHERE repository_id = ? AND status = 'open'`,
         )
         .all(repositoryId);
 
@@ -207,7 +273,10 @@ export class ReviewStore {
 
       const newFindings = input.findings.filter((finding) => !knownFingerprints.has(finding.fingerprint));
       const resolvedFingerprints = previouslyOpen
-        .filter((row) => scannedPaths.has(row.file_path) && !currentFingerprints.has(row.fingerprint))
+        .filter(
+          (row) =>
+            !currentFingerprints.has(row.fingerprint) && scope.examined(row.file_path, row.line),
+        )
         .map((row) => row.fingerprint);
 
       const scan = this.db
@@ -240,15 +309,16 @@ export class ReviewStore {
       );
       const upsertState = this.db.prepare(
         `INSERT INTO finding_state (
-           repository_id, fingerprint, rule_id, category, severity, file_path, title,
+           repository_id, fingerprint, rule_id, category, severity, file_path, line, title,
            status, first_seen_at, last_seen_at, resolved_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', datetime('now'), datetime('now'), NULL)
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', datetime('now'), datetime('now'), NULL)
          ON CONFLICT (repository_id, fingerprint) DO UPDATE SET
            last_seen_at = datetime('now'),
            status       = 'open',
            resolved_at  = NULL,
            severity     = excluded.severity,
            file_path    = excluded.file_path,
+           line         = excluded.line,
            title        = excluded.title`,
       );
 
@@ -277,6 +347,7 @@ export class ReviewStore {
           finding.category,
           finding.severity,
           finding.filePath,
+          finding.line,
           finding.title,
         );
       }

@@ -106,7 +106,10 @@ export class PullRequestReviewer {
       filesScanned: summary.filesScanned,
       durationMs: summary.durationMs,
       findings: summary.findings,
-      scannedPaths: inputs.map((input) => input.filePath),
+      examined: inputs.map((input) => ({
+        path: input.filePath,
+        lines: input.changedLines === null ? null : [...input.changedLines],
+      })),
     });
 
     const newFingerprints = new Set(
