@@ -1,3 +1,4 @@
+import { gzipSync } from 'node:zlib';
 import { Octokit } from '@octokit/rest';
 import { logger } from '../util/logger';
 
@@ -231,6 +232,60 @@ export class GitHubClient {
           comments: comments.length,
           reason: (error as Error).message,
         });
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Uploads a SARIF run to code scanning, so findings appear in the Security tab
+   * and GitHub takes over alert tracking and dismissal.
+   *
+   * Returns the upload id, or `null` when the feature is unavailable rather than
+   * broken - a token without `security_events`, code scanning not enabled on the
+   * repository, or a plan that does not include it. Those are configuration
+   * facts, not failures, and they must not take down a review that is otherwise
+   * working.
+   */
+  async uploadSarif(
+    owner: string,
+    repo: string,
+    commitSha: string,
+    ref: string,
+    sarif: string,
+    toolName: string,
+  ): Promise<string | null> {
+    // The API takes the document gzipped and base64-encoded.
+    const encoded = gzipSync(Buffer.from(sarif, 'utf8')).toString('base64');
+    try {
+      // The typed endpoint rather than the generic `request()` helper, which
+      // keeps this consistent with every other call in this file and avoids a
+      // shape the tool's own SSRF rule cannot distinguish from a free-form
+      // outbound request.
+      const { data } = await this.octokit.codeScanning.uploadSarif({
+        owner,
+        repo,
+        commit_sha: commitSha,
+        ref,
+        sarif: encoded,
+        tool_name: toolName,
+      });
+      return (data as { id?: string }).id ?? 'accepted';
+    } catch (error) {
+      const status = (error as { status?: number }).status;
+      if (status === 403 || status === 404) {
+        logger.info('code scanning upload unavailable', {
+          repository: `${owner}/${repo}`,
+          status,
+          hint:
+            'the token needs the security_events scope, and code scanning must be enabled ' +
+            'on the repository',
+        });
+        return null;
+      }
+      if (status === 413) {
+        logger.warn('code scanning upload too large', { repository: `${owner}/${repo}` });
         return null;
       }
       throw error;

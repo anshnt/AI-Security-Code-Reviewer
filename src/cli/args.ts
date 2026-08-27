@@ -19,7 +19,7 @@ export interface CliOptions {
   paths: string[];
   /** When set, scan only what changed against this git ref. */
   diffAgainst: string | null;
-  format: 'pretty' | 'json';
+  format: 'pretty' | 'json' | 'sarif';
   /** Exit non-zero when a finding at or above this severity is present. */
   failOn: Severity | 'never';
   /** Findings below this are not reported at all. */
@@ -113,8 +113,8 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       }
       case '--format': {
         const value = takeValue();
-        if (value !== 'pretty' && value !== 'json') {
-          return { error: `--format must be pretty or json, not ${String(value)}` };
+        if (value !== 'pretty' && value !== 'json' && value !== 'sarif') {
+          return { error: `--format must be pretty, json or sarif, not ${String(value)}` };
         }
         options.format = value;
         break;
@@ -208,7 +208,9 @@ Scanning
   --min-severity <level>  Do not report below this level. Default: low.
 
 Output
-  --format <pretty|json>  Default: pretty.
+  --format <fmt>          pretty (default), json, or sarif. SARIF can be
+                          uploaded to GitHub code scanning by the
+                          github/codeql-action/upload-sarif action.
   --limit <n>             Findings to print in full. Default: 50.
   --color / --no-color    Override colour detection.
   --quiet, -q             Print only the summary line.

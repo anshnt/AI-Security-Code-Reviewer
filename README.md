@@ -159,6 +159,47 @@ As a pre-commit hook:
 npx security-review --diff HEAD --fail-on high --quiet
 ```
 
+## Findings in the Security tab
+
+Every review also uploads a SARIF run to code scanning, which is how findings
+become durable rather than living only in a comment that scrolls away. Once
+they are alerts, GitHub does three things this tool cannot: tracks an alert
+across pushes, remembers a dismissal with its reason, and shows a repository's
+alert history in one place.
+
+Three details make that work, and each is easy to get wrong:
+
+- **`partialFingerprints` carries the content fingerprint.** Without it GitHub
+  matches alerts by location, so an alert closes and reopens every time
+  something above it shifts by a line, and a dismissal does not survive.
+- **`security-severity` is a numeric score, not our severity word.** GitHub
+  buckets it itself, so each severity maps to the middle of its band — otherwise
+  the Security tab and the pull request comment disagree about the same finding.
+  `info` gets no score at all: GitHub's lowest security band starts at 0.1, so
+  scoring it would file an informational note as a low-severity security alert.
+- **Only critical and high are SARIF `error`.** A tool where a predictable
+  temporary file fails the build gets switched off.
+
+A clean review still uploads an empty run, because that is how GitHub learns the
+previous alerts are gone.
+
+Needs `security_events` write permission and code scanning enabled. When either
+is missing the upload is skipped with an explanation — a configuration fact, not
+a failure — and the review completes as normal. Set `CODE_SCANNING_UPLOAD=false`
+to switch it off.
+
+### Without hosting anything
+
+`docs/security-review-action.yml` is a ready-made workflow that runs the CLI in
+Actions and uploads the SARIF, giving you the Security tab integration with no
+server to deploy. You give up the pull-request comment, the inline comments and
+the dashboard; you gain having nothing to run.
+
+```bash
+security-review --diff origin/main --format sarif --fail-on never > results.sarif
+# then: github/codeql-action/upload-sarif@v3
+```
+
 ## Model-assisted triage
 
 The analyzers answer "does this code match a dangerous shape?". That is the right
@@ -328,6 +369,7 @@ explanations. The ones worth knowing:
 | `INLINE_COMMENTS` | `true` | Post findings inline on the changed lines as well as in the summary. |
 | `MAX_INLINE_COMMENTS` | `15` | Cap per review; the rest stay in the summary. |
 | `INLINE_MIN_SEVERITY` | `medium` | Severity floor for inline placement. |
+| `CODE_SCANNING_UPLOAD` | `true` | Upload a SARIF run so findings appear in the Security tab. |
 
 ### Per-repository configuration
 
@@ -449,6 +491,8 @@ src/
     taint.ts          Shared single-file taint reasoning
     advisories.ts     Offline advisory snapshot and version comparison
     rules/            One analyzer per category
+  report/
+    sarif.ts          SARIF 2.1.0 output for code scanning
   cli/
     index.ts          Local entry point and exit-status contract
     args.ts           Argument parsing and the help text

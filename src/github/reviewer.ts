@@ -10,6 +10,7 @@ import { logger } from '../util/logger';
 import { COMMENT_MARKER, renderComment, renderStatusDescription, type TriageSummary } from './comment';
 import type { GitHubClient, PullRequestFile } from './client';
 import { planInlineComments } from './inline';
+import { renderSarif } from '../report/sarif';
 
 /**
  * End-to-end review of one pull request.
@@ -18,6 +19,11 @@ import { planInlineComments } from './inline';
  * SHA produces the same comment and the same status, which matters because
  * GitHub redelivers webhooks and because authors push repeatedly.
  */
+
+/** Identity reported to code scanning, so alerts are attributed to this tool. */
+export const TOOL_NAME = 'security-review';
+export const TOOL_VERSION = '0.1.0';
+export const TOOL_URI = 'https://github.com/anshnt/AI-Security-Code-Reviewer';
 
 export interface ReviewRequest {
   owner: string;
@@ -40,6 +46,8 @@ export interface ReviewOutcome {
   inlineComments?: number;
   /** Problems found in the repository's own config file. */
   configWarnings?: string[];
+  /** Set when a SARIF run was accepted by code scanning. */
+  codeScanningUploadId?: string;
 }
 
 export class PullRequestReviewer {
@@ -191,6 +199,18 @@ export class PullRequestReviewer {
       config,
     );
 
+    // Code scanning is where findings become durable: GitHub tracks each alert
+    // across pushes and remembers a dismissal, which a pull-request comment
+    // cannot do.
+    const uploadId = await this.uploadToCodeScanning(
+      owner,
+      repo,
+      pullNumber,
+      pullRequest.headSha,
+      reviewed.findings,
+      config,
+    );
+
     const comment = await this.client.upsertComment(
       owner,
       repo,
@@ -234,7 +254,63 @@ export class PullRequestReviewer {
         : {}),
       inlineComments: inline,
       ...(merged.warnings.length > 0 ? { configWarnings: merged.warnings } : {}),
+      ...(uploadId ? { codeScanningUploadId: uploadId } : {}),
     };
+  }
+
+  /**
+   * Uploads a SARIF run for this pull request.
+   *
+   * Best effort, like the inline comments: the pull-request comment and the
+   * commit status are the contract, and this is an addition on top. A repository
+   * without code scanning enabled, or a token without `security_events`, is a
+   * configuration fact rather than a failure.
+   *
+   * The ref is `refs/pull/<n>/merge` so GitHub attaches the alerts to the pull
+   * request rather than to a branch that may not exist on the upstream.
+   */
+  private async uploadToCodeScanning(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+    headSha: string,
+    findings: TriagedFinding[],
+    config: AppConfig,
+  ): Promise<string | null> {
+    if (!config.review.codeScanningUpload) return null;
+
+    try {
+      const sarif = renderSarif(findings, {
+        toolName: TOOL_NAME,
+        toolVersion: TOOL_VERSION,
+        informationUri: TOOL_URI,
+        automationId: `security-review/pr-${pullNumber}`,
+      });
+      const uploadId = await this.client.uploadSarif(
+        owner,
+        repo,
+        headSha,
+        `refs/pull/${pullNumber}/merge`,
+        sarif,
+        TOOL_NAME,
+      );
+      if (uploadId) {
+        logger.info('uploaded sarif run', {
+          repository: `${owner}/${repo}`,
+          pullNumber,
+          findings: findings.length,
+          uploadId,
+        });
+      }
+      return uploadId;
+    } catch (error) {
+      logger.warn('sarif upload failed', {
+        repository: `${owner}/${repo}`,
+        pullNumber,
+        error: (error as Error).message,
+      });
+      return null;
+    }
   }
 
   /**

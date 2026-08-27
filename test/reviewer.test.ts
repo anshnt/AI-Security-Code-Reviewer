@@ -84,6 +84,23 @@ class StubClient {
     this.reviewComments.push(...comments);
     return comments.length;
   }
+
+  sarifUploads: { commitSha: string; ref: string; sarif: string; toolName: string }[] = [];
+  /** Mirrors a token without security_events, or code scanning being off. */
+  sarifUnavailable = false;
+
+  async uploadSarif(
+    _o: string,
+    _r: string,
+    commitSha: string,
+    ref: string,
+    sarif: string,
+    toolName: string,
+  ): Promise<string | null> {
+    if (this.sarifUnavailable) return null;
+    this.sarifUploads.push({ commitSha, ref, sarif, toolName });
+    return 'upload-1';
+  }
 }
 
 function config(overrides: Partial<AppConfig['review']> = {}): AppConfig {
@@ -543,5 +560,104 @@ describe('repository configuration', () => {
 
     expect(client.reviewComments).toHaveLength(0);
     expect(outcome.inlineComments).toBe(0);
+  });
+});
+
+describe('code scanning upload', () => {
+  let store: ReviewStore;
+
+  beforeEach(() => {
+    store = new ReviewStore(':memory:');
+  });
+
+  it('uploads a SARIF run for the pull request', async () => {
+    const client = new StubClient(INFO, [FILE], { 'src/users.ts': VULNERABLE });
+    const outcome = await new PullRequestReviewer(
+      client as unknown as GitHubClient,
+      store,
+      config(),
+    ).review({ owner: 'acme', repo: 'app', pullNumber: 7 });
+
+    expect(client.sarifUploads).toHaveLength(1);
+    const upload = client.sarifUploads[0]!;
+    expect(upload.commitSha).toBe(INFO.headSha);
+    // refs/pull/<n>/merge attaches the alerts to the pull request rather than
+    // to a branch that may not exist upstream.
+    expect(upload.ref).toBe('refs/pull/7/merge');
+    expect(outcome.codeScanningUploadId).toBe('upload-1');
+
+    const document = JSON.parse(upload.sarif) as {
+      runs: { results: { ruleId: string; partialFingerprints: Record<string, string> }[] }[];
+    };
+    const result = document.runs[0]!.results.find((r) => r.ruleId.startsWith('sql-injection'))!;
+    expect(result.partialFingerprints.securityReviewFingerprint).toBeTruthy();
+  });
+
+  it('carries the reviewed paths, relative to the repository root', async () => {
+    const client = new StubClient(INFO, [FILE], { 'src/users.ts': VULNERABLE });
+    await new PullRequestReviewer(client as unknown as GitHubClient, store, config()).review({
+      owner: 'acme',
+      repo: 'app',
+      pullNumber: 7,
+    });
+    const document = JSON.parse(client.sarifUploads[0]!.sarif) as {
+      runs: { results: { locations: { physicalLocation: { artifactLocation: { uri: string } } }[] }[] }[];
+    };
+    const uri = document.runs[0]!.results[0]!.locations[0]!.physicalLocation.artifactLocation.uri;
+    expect(uri).toBe('src/users.ts');
+  });
+
+  it('completes the review when code scanning is unavailable', async () => {
+    const client = new StubClient(INFO, [FILE], { 'src/users.ts': VULNERABLE });
+    client.sarifUnavailable = true;
+    const outcome = await new PullRequestReviewer(
+      client as unknown as GitHubClient,
+      store,
+      config(),
+    ).review({ owner: 'acme', repo: 'app', pullNumber: 7 });
+
+    expect(outcome.codeScanningUploadId).toBeUndefined();
+    expect(outcome.findings.length).toBeGreaterThan(0);
+    expect(client.comments[0]!.body).toContain('SQL query built by string interpolation');
+  });
+
+  it('completes the review when the upload throws', async () => {
+    const client = new StubClient(INFO, [FILE], { 'src/users.ts': VULNERABLE });
+    client.uploadSarif = async () => {
+      throw new Error('upstream exploded');
+    };
+    const outcome = await new PullRequestReviewer(
+      client as unknown as GitHubClient,
+      store,
+      config(),
+    ).review({ owner: 'acme', repo: 'app', pullNumber: 7 });
+
+    expect(outcome.codeScanningUploadId).toBeUndefined();
+    expect(outcome.status).toBe('failure');
+    expect(client.comments).toHaveLength(1);
+  });
+
+  it('does not upload when the feature is switched off', async () => {
+    const client = new StubClient(INFO, [FILE], { 'src/users.ts': VULNERABLE });
+    await new PullRequestReviewer(
+      client as unknown as GitHubClient,
+      store,
+      config({ codeScanningUpload: false }),
+    ).review({ owner: 'acme', repo: 'app', pullNumber: 7 });
+    expect(client.sarifUploads).toHaveLength(0);
+  });
+
+  it('uploads an empty run on a clean review, so resolved alerts close', async () => {
+    // An upload with no results is how GitHub learns the previous alerts are
+    // gone. Skipping it would leave them open forever.
+    const client = new StubClient(INFO, [{ ...FILE, status: 'modified' }], { 'src/users.ts': FIXED });
+    await new PullRequestReviewer(client as unknown as GitHubClient, store, config()).review({
+      owner: 'acme',
+      repo: 'app',
+      pullNumber: 7,
+    });
+    expect(client.sarifUploads).toHaveLength(1);
+    const document = JSON.parse(client.sarifUploads[0]!.sarif) as { runs: { results: unknown[] }[] };
+    expect(document.runs[0]!.results).toEqual([]);
   });
 });

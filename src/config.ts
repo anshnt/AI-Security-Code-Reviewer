@@ -39,6 +39,8 @@ export interface AppConfig {
     maxInlineComments: number;
     /** Only findings at or above this severity are posted inline. */
     inlineMinSeverity: Severity;
+    /** Upload a SARIF run to code scanning, putting findings in the Security tab. */
+    codeScanningUpload: boolean;
   };
   ai: AiConfig;
 }
@@ -131,6 +133,7 @@ export function loadConfig(): AppConfig {
       inlineComments: readBool('INLINE_COMMENTS', true),
       maxInlineComments: readInt('MAX_INLINE_COMMENTS', 15),
       inlineMinSeverity: readSeverity('INLINE_MIN_SEVERITY', 'medium'),
+      codeScanningUpload: readBool('CODE_SCANNING_UPLOAD', true),
     },
   };
 }
