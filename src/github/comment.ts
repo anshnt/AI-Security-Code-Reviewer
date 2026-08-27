@@ -61,6 +61,11 @@ export interface CommentOptions {
   failOnSeverity: Severity | 'never';
   /** Present when the triage pass ran. */
   triage?: TriageSummary;
+  /**
+   * How many findings were anchored inline. Used to point the reader at the
+   * Files Changed tab rather than repeating everything here.
+   */
+  inlineCommentCount?: number;
 }
 
 export function renderComment(findings: TriagedFinding[], options: CommentOptions): string {
@@ -106,6 +111,15 @@ export function renderComment(findings: TriagedFinding[], options: CommentOption
     parts.push(
       `> ${blocking} ${plural(blocking, 'finding')} at or above **${options.failOnSeverity}** ` +
         'severity, so the security status check is failing on this commit.',
+      '',
+    );
+  }
+
+  if (options.inlineCommentCount && options.inlineCommentCount > 0) {
+    parts.push(
+      `${options.inlineCommentCount} of these ${plural(options.inlineCommentCount, 'finding')} ` +
+        `${options.inlineCommentCount === 1 ? 'is' : 'are'} also commented inline on the ` +
+        'changed lines, under **Files changed**.',
       '',
     );
   }

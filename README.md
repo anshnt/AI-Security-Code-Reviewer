@@ -89,6 +89,36 @@ the examined range, and line matching is exact: closing a finding that is still
 in the code costs the vulnerability, while leaving a stale one open costs a
 moment of attention.
 
+## Where the findings appear
+
+Findings land in two places, and the split is deliberate.
+
+**Inline, on the line.** Findings on a line GitHub is showing get a comment
+right there in **Files changed**, with the consequence, the fix, and the exact
+`security-review-ignore` directive to use if the tool is wrong. That is the view
+the author is already reading, so it is where a finding is cheapest to act on.
+
+**In one summary comment.** Everything is also in a single comment that is
+updated in place on each push, so the pull request accumulates one comment
+rather than one per push. It carries the overview, the severity counts, the
+lower-severity table, anything that could not be anchored, and anything the
+triage pass refuted.
+
+A few properties worth knowing:
+
+- **No repeats.** Each inline comment carries a hidden fingerprint; a finding
+  already commented on is skipped on the next push. GitHub never deletes review
+  comments, so the reviewer has to deduplicate rather than relying on the
+  platform.
+- **Bounded.** `MAX_INLINE_COMMENTS` (15) and `INLINE_MIN_SEVERITY` (medium) keep
+  the volume reviewable. Everything over the budget stays in the summary.
+- **`COMMENT`, never `REQUEST_CHANGES`.** Blocking a merge is the commit status's
+  job. A changes-requested review from a bot has to be dismissed by a human
+  before anything can merge, which is a worse experience and easy to forget.
+- **Best effort.** If a line turns out not to be commentable, or the API errors,
+  the summary still carries every finding. Inline placement is convenience, not
+  the record.
+
 ## Model-assisted triage
 
 The analyzers answer "does this code match a dangerous shape?". That is the right
@@ -239,6 +269,9 @@ explanations. The ones worth knowing:
 | `AI_MODEL` | *(unset)* | Model identifier, or `auto`. With `ANTHROPIC_API_KEY`, enables triage. |
 | `AI_MIN_SEVERITY` | `medium` | Severity floor for triage - the main cost dial. |
 | `AI_DROP_REFUTED` | `false` | Whether a refuted finding is removed rather than labelled. |
+| `INLINE_COMMENTS` | `true` | Post findings inline on the changed lines as well as in the summary. |
+| `MAX_INLINE_COMMENTS` | `15` | Cap per review; the rest stay in the summary. |
+| `INLINE_MIN_SEVERITY` | `medium` | Severity floor for inline placement. |
 
 ### Suppressing a finding
 
@@ -315,7 +348,8 @@ src/
     webhook.ts        Signature verification and event routing
     client.ts         REST wrapper
     reviewer.ts       End-to-end review of one pull request
-    comment.ts        Comment and commit-status rendering
+    comment.ts        Summary comment and commit-status rendering
+    inline.ts         Inline comment planning and rendering
   storage/
     database.ts       Schema and finding lifecycle reconciliation
     queries.ts        Read-side queries for the dashboard

@@ -33,6 +33,12 @@ export interface AppConfig {
     maxFileBytes: number;
     /** Skip pull requests touching more than this many files. */
     maxFilesPerPullRequest: number;
+    /** Post findings as inline review comments as well as the summary. */
+    inlineComments: boolean;
+    /** Cap on inline comments in one review. */
+    maxInlineComments: number;
+    /** Only findings at or above this severity are posted inline. */
+    inlineMinSeverity: Severity;
   };
   ai: AiConfig;
 }
@@ -122,6 +128,9 @@ export function loadConfig(): AppConfig {
       disabledRules: readList('DISABLED_RULES'),
       maxFileBytes: readInt('MAX_FILE_BYTES', 400_000),
       maxFilesPerPullRequest: readInt('MAX_FILES_PER_PR', 300),
+      inlineComments: readBool('INLINE_COMMENTS', true),
+      maxInlineComments: readInt('MAX_INLINE_COMMENTS', 15),
+      inlineMinSeverity: readSeverity('INLINE_MIN_SEVERITY', 'medium'),
     },
   };
 }

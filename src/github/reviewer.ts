@@ -7,6 +7,7 @@ import type { ReviewStore } from '../storage/database';
 import { logger } from '../util/logger';
 import { COMMENT_MARKER, renderComment, renderStatusDescription, type TriageSummary } from './comment';
 import type { GitHubClient, PullRequestFile } from './client';
+import { planInlineComments } from './inline';
 
 /**
  * End-to-end review of one pull request.
@@ -33,6 +34,8 @@ export interface ReviewOutcome {
   /** How many findings the triage pass judged, and how many it refuted. */
   triaged?: number;
   refuted?: number;
+  /** How many findings were anchored to their line in the diff. */
+  inlineComments?: number;
 }
 
 export class PullRequestReviewer {
@@ -89,6 +92,7 @@ export class PullRequestReviewer {
     );
 
     const files = await this.client.pullRequestFiles(owner, repo, pullNumber);
+    const commentableLines = collectCommentableLines(files);
     const inputs = await this.buildInputs(owner, repo, pullRequest.headSha, files);
 
     const summary = scan(inputs, {
@@ -127,20 +131,38 @@ export class PullRequestReviewer {
         .map((finding) => finding.fingerprint),
     );
 
-    const body = renderComment(reviewed.findings, {
-      repositoryFullName,
-      headSha: pullRequest.headSha,
-      filesScanned: summary.filesScanned,
-      durationMs: summary.durationMs,
-      newFingerprints,
-      resolvedCount: record.resolvedFingerprints.length,
-      maxRendered: this.config.review.maxFindingsPerComment,
-      dashboardUrl: this.config.publicUrl,
-      failOnSeverity: this.config.review.failOnSeverity,
-      triage: reviewed.summary,
-    });
+    const bodyFor = (inlineCount: number): string =>
+      renderComment(reviewed.findings, {
+        repositoryFullName,
+        headSha: pullRequest.headSha,
+        filesScanned: summary.filesScanned,
+        durationMs: summary.durationMs,
+        newFingerprints,
+        resolvedCount: record.resolvedFingerprints.length,
+        maxRendered: this.config.review.maxFindingsPerComment,
+        dashboardUrl: this.config.publicUrl,
+        failOnSeverity: this.config.review.failOnSeverity,
+        triage: reviewed.summary,
+        inlineCommentCount: inlineCount,
+      });
 
-    const comment = await this.client.upsertComment(owner, repo, pullNumber, COMMENT_MARKER, body);
+    // Inline comments first: the summary then knows what it still has to carry.
+    const inline = await this.postInlineComments(
+      owner,
+      repo,
+      pullNumber,
+      pullRequest.headSha,
+      reviewed.findings,
+      commentableLines,
+    );
+
+    const comment = await this.client.upsertComment(
+      owner,
+      repo,
+      pullNumber,
+      COMMENT_MARKER,
+      bodyFor(inline),
+    );
 
     const blocking = this.blockingCount(reviewed.findings);
     const status: 'success' | 'failure' = blocking > 0 ? 'failure' : 'success';
@@ -160,6 +182,7 @@ export class PullRequestReviewer {
       newFindings: newFingerprints.size,
       resolved: record.resolvedFingerprints.length,
       blocking,
+      inlineComments: inline,
       commentUpdated: comment.updated,
       totalMs: Date.now() - started,
     });
@@ -174,7 +197,69 @@ export class PullRequestReviewer {
       ...(reviewed.summary
         ? { triaged: reviewed.summary.triagedCount, refuted: reviewed.summary.refutedCount }
         : {}),
+      inlineComments: inline,
     };
+  }
+
+  /**
+   * Anchors findings to their lines in the diff.
+   *
+   * Best effort by design: a failure here is cosmetic, because every finding is
+   * in the summary comment regardless. So a rejected review or an API error is
+   * logged and swallowed rather than failing the review.
+   */
+  private async postInlineComments(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+    headSha: string,
+    findings: TriagedFinding[],
+    commentableLines: Map<string, Set<number>>,
+  ): Promise<number> {
+    if (!this.config.review.inlineComments || findings.length === 0) return 0;
+
+    try {
+      const existing = await this.client.listReviewComments(owner, repo, pullNumber);
+      const plan = planInlineComments(findings, {
+        commentableLines,
+        existingBodies: existing.map((comment) => comment.body),
+        maxComments: this.config.review.maxInlineComments,
+        minSeverity: this.config.review.inlineMinSeverity,
+        ...(this.config.publicUrl ? { dashboardUrl: this.config.publicUrl } : {}),
+        repositoryFullName: `${owner}/${repo}`,
+      });
+
+      if (plan.comments.length === 0) {
+        logger.debug('no inline comments to post', {
+          pullNumber,
+          alreadyPosted: plan.alreadyPosted,
+          deferred: plan.deferred.length,
+        });
+        return 0;
+      }
+
+      const posted = await this.client.createReviewWithComments(
+        owner,
+        repo,
+        pullNumber,
+        headSha,
+        plan.comments,
+      );
+      if (posted === null) return 0;
+      logger.info('posted inline comments', {
+        pullNumber,
+        posted,
+        alreadyPosted: plan.alreadyPosted,
+        deferred: plan.deferred.length,
+      });
+      return posted;
+    } catch (error) {
+      logger.warn('inline comments failed', {
+        pullNumber,
+        error: (error as Error).message,
+      });
+      return 0;
+    }
   }
 
   /**
@@ -292,6 +377,24 @@ export class PullRequestReviewer {
     if (!this.config.publicUrl) return undefined;
     return `${this.config.publicUrl}/?repo=${encodeURIComponent(repositoryFullName)}`;
   }
+}
+
+/**
+ * Lines GitHub will accept a review comment on, per file.
+ *
+ * Every line the patch shows - added and context alike - is commentable, which
+ * is exactly what the diff parser already records positions for. Deletions are
+ * not, since they no longer exist on the right-hand side.
+ */
+function collectCommentableLines(files: PullRequestFile[]): Map<string, Set<number>> {
+  const out = new Map<string, Set<number>>();
+  for (const file of files) {
+    if (file.status === 'removed') continue;
+    const parsed = parsePatch(file.patch);
+    if (parsed.positionByLine.size === 0) continue;
+    out.set(file.filename, new Set(parsed.positionByLine.keys()));
+  }
+  return out;
 }
 
 function normalizeStatus(status: PullRequestFile['status']): FileInput['status'] {
