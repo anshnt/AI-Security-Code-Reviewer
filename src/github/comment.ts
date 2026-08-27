@@ -73,6 +73,17 @@ export interface CommentOptions {
    * reading the server's stdout.
    */
   configWarnings?: string[];
+  /**
+   * Set when the live advisory lookup failed and the dependency rule ran against
+   * the bundled snapshot alone.
+   *
+   * Saying so is not housekeeping. "No dependency findings" reads as "your
+   * dependencies were checked", and a snapshot is out of date the day it ships -
+   * the advisory that matters most is usually the one published last week. A
+   * degraded check that cannot announce itself is worse than no check, because
+   * it buys confidence it did not earn.
+   */
+  degradedAdvisoryLookup?: string;
 }
 
 export function renderComment(findings: TriagedFinding[], options: CommentOptions): string {
@@ -100,6 +111,9 @@ export function renderComment(findings: TriagedFinding[], options: CommentOption
       );
     }
     if (refuted.length > 0) parts.push('', renderRefuted(refuted));
+    if (options.degradedAdvisoryLookup) {
+      parts.push('', renderAdvisoryNote(options.degradedAdvisoryLookup));
+    }
     if (options.configWarnings?.length) parts.push('', renderConfigWarnings(options.configWarnings));
     parts.push('', footer(options));
     return parts.join('\n');
@@ -180,6 +194,7 @@ export function renderComment(findings: TriagedFinding[], options: CommentOption
   }
 
   if (refuted.length > 0) parts.push(renderRefuted(refuted), '');
+  if (options.degradedAdvisoryLookup) parts.push(renderAdvisoryNote(options.degradedAdvisoryLookup), '');
   if (options.configWarnings?.length) parts.push(renderConfigWarnings(options.configWarnings), '');
 
   parts.push(footer(options));
@@ -219,6 +234,21 @@ function renderRefuted(findings: TriagedFinding[]): string {
  * Config problems, stated plainly. A typo that silently disables a rule is a
  * security hole with a friendly face, so these are not collapsed away.
  */
+/**
+ * The degraded-lookup note.
+ *
+ * Deliberately phrased as a limit on this review rather than as a fault, and it
+ * names the reason so the person reading can tell a blocked egress rule from an
+ * outage and act accordingly.
+ */
+function renderAdvisoryNote(error: string): string {
+  return (
+    '> **Dependencies were checked against the bundled advisory snapshot only.** ' +
+    `The live advisory database could not be reached (${error}). Advisories published since this ` +
+    'build will not appear above; re-running the review once connectivity is back will pick them up.'
+  );
+}
+
 function renderConfigWarnings(warnings: string[]): string {
   const lines: string[] = [
     `> **${warnings.length} problem${warnings.length === 1 ? '' : 's'} in the security review configuration**`,

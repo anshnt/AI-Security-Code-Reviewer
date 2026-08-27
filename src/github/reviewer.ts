@@ -1,5 +1,5 @@
 import { parsePatch, reconstructFromPatch } from '../analysis/diff';
-import { buildTarget, scan, type FileInput } from '../analysis/engine';
+import { buildTarget, scanWithAdvisories, type FileInput } from '../analysis/engine';
 import { SEVERITY_RANK, type Finding, type ScanTarget, type Severity } from '../analysis/types';
 import { triage, type TriagedFinding } from '../ai/triage';
 import type { AppConfig } from '../config';
@@ -121,12 +121,20 @@ export class PullRequestReviewer {
       (input) => pathInScope(repoConfig, input.filePath),
     );
 
-    const summary = scan(inputs, {
-      minSeverity: config.review.minSeverity,
-      maxFindingsPerFile: config.review.maxFindingsPerFile,
-      includeTests: config.review.includeTests,
-      disabledRules: config.review.disabledRules,
-    });
+    const summary = await scanWithAdvisories(
+      inputs,
+      {
+        minSeverity: config.review.minSeverity,
+        maxFindingsPerFile: config.review.maxFindingsPerFile,
+        includeTests: config.review.includeTests,
+        disabledRules: config.review.disabledRules,
+      },
+      {
+        enabled: config.review.advisoryLookup,
+        baseUrl: config.review.advisoryBaseUrl,
+        timeoutMs: config.review.advisoryTimeoutMs,
+      },
+    );
 
     // Per-rule severity replacement happens after the analyzers run, so a rule
     // can be downgraded without being silenced.
@@ -186,6 +194,9 @@ export class PullRequestReviewer {
         triage: reviewed.summary,
         inlineCommentCount: inlineCount,
         configWarnings: merged.warnings,
+        ...(summary.advisoryLookup?.error
+          ? { degradedAdvisoryLookup: summary.advisoryLookup.error }
+          : {}),
       });
 
     // Inline comments first: the summary then knows what it still has to carry.

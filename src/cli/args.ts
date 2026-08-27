@@ -30,6 +30,8 @@ export interface CliOptions {
   noConfig: boolean;
   includeTests: boolean;
   disabledRules: string[];
+  /** Query a live advisory database as well as the bundled snapshot. */
+  advisoryLookup: boolean;
   color: boolean | null;
   /** Cap on findings printed; the rest are summarised. */
   limit: number;
@@ -52,6 +54,7 @@ const DEFAULTS: CliOptions = {
   noConfig: false,
   includeTests: false,
   disabledRules: [],
+  advisoryLookup: true,
   color: null,
   limit: 50,
   quiet: false,
@@ -147,6 +150,10 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       case '--include-tests':
         options.includeTests = true;
         break;
+      case '--no-advisory-lookup':
+      case '--offline':
+        options.advisoryLookup = false;
+        break;
       case '--disable': {
         const value = takeValue();
         if (!value) return { error: '--disable needs a rule id or category' };
@@ -205,6 +212,8 @@ Scanning
                           default because they legitimately contain fake
                           credentials and deliberately unsafe examples.
   --disable <list>        Comma-separated rule ids or categories to skip.
+  --offline               Do not query the live advisory database; use only the
+                          bundled snapshot. Also --no-advisory-lookup.
   --min-severity <level>  Do not report below this level. Default: low.
 
 Output

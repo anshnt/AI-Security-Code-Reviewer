@@ -30,7 +30,7 @@ Six categories, each with its own analyzer:
 | **SQL injection** | Queries built by concatenation, template interpolation or `%`-formatting instead of parameter binding; raw ORM escape hatches (`$queryRawUnsafe`, `knex.raw`) reached by request data. |
 | **Authentication** | JWTs decoded without verification, `alg: none`, expiry checks disabled, passwords stored with a fast hash, plaintext password comparison, timing-unsafe secret comparison, non-cryptographic randomness for tokens, TLS verification switched off, session cookies missing their flags, auth bypasses gated on `NODE_ENV`. |
 | **Secrets** | Provider-specific credential formats (AWS, GitHub, Slack, Stripe, Google, SendGrid, Twilio, npm, private keys, connection strings with inline passwords) plus an entropy-gated generic check, and credential-bearing files added to version control. |
-| **Dependencies** | Version ranges that permit a published advisory, unbounded ranges, plain-HTTP and unpinned-git sources, install hooks that fetch and execute code, and likely typosquats. |
+| **Dependencies** | Version ranges that permit a published advisory — checked against a live advisory database as well as a bundled snapshot — plus unbounded ranges, plain-HTTP and unpinned-git sources, install hooks that fetch and execute code, and likely typosquats. |
 | **Authorization** | Records fetched by a client-supplied ID with no ownership predicate (IDOR), state-changing routes with no auth middleware, mass assignment from the request body, privilege levels read from the request, public object ACLs, wildcard IAM policies, security groups open to the internet, wildcard CORS with credentials, and path traversal. |
 | **Dangerous APIs** | `eval` and dynamic code evaluation, shell execution built from untrusted input, unsafe deserialization (`pickle`, `yaml.load`, `unserialize`, `ObjectInputStream`), HTML injection sinks, SSRF, weak ciphers and broken hashes, XXE, archive extraction without path validation, prototype-pollution sinks, debug mode, and regex denial of service. |
 
@@ -131,6 +131,7 @@ npx security-review                        # scan the working tree
 npx security-review --diff origin/main     # scan only what this branch changed
 npx security-review src/ --fail-on critical
 npx security-review --format json | jq .
+npx security-review --offline                # bundled advisory snapshot only
 npx security-review --list-rules
 ```
 
@@ -370,6 +371,9 @@ explanations. The ones worth knowing:
 | `MAX_INLINE_COMMENTS` | `15` | Cap per review; the rest stay in the summary. |
 | `INLINE_MIN_SEVERITY` | `medium` | Severity floor for inline placement. |
 | `CODE_SCANNING_UPLOAD` | `true` | Upload a SARIF run so findings appear in the Security tab. |
+| `ADVISORY_LOOKUP` | `true` | Check declared versions against a live advisory database, not just the bundled snapshot. |
+| `ADVISORY_BASE_URL` | `https://api.osv.dev` | Point at a mirror, an internal proxy, or a self-hosted instance. |
+| `ADVISORY_TIMEOUT_MS` | `8000` | Give up and fall back to the snapshot after this long. |
 
 ### Per-repository configuration
 
@@ -490,6 +494,7 @@ src/
     source.ts         Language detection, fingerprinting, entropy, helpers
     taint.ts          Shared single-file taint reasoning
     advisories.ts     Offline advisory snapshot and version comparison
+    osv.ts            Live advisory lookup, cached, with an offline fallback
     rules/            One analyzer per category
   report/
     sarif.ts          SARIF 2.1.0 output for code scanning
@@ -530,11 +535,48 @@ docs/images/          Screenshots and generated figures
 
 ## Advisory data
 
+Dependency findings come from two sources, and the split is deliberate.
+
 `src/analysis/advisories.ts` carries a curated snapshot of high-impact published
-advisories so a dependency bump can be judged without a network round trip on
-the review path. It is a floor, not a substitute for a full vulnerability
-database - point it at a live source (OSV, the GitHub Advisory Database) for
-exhaustive coverage.
+advisories. It needs no network, so a review still checks dependencies when
+egress is blocked, when the upstream database is down, and in the CLI on a
+plane. It is also out of date the day it ships.
+
+So the versions a pull request declares are also queried against a live
+advisory database — [OSV.dev](https://osv.dev) by default, which aggregates the
+GitHub Advisory Database, PyPA, RustSec, Go's vulnerability database and others.
+The lookup happens once per review, before any rule runs, so the analyzers stay
+synchronous and none of them reaches the network on its own. Results are cached
+for six hours per process, including the *absence* of an advisory, because "this
+version is fine" is the answer for almost every dependency and re-asking is
+pure latency.
+
+Three properties matter more than coverage:
+
+- **A live result never replaces the snapshot, only adds to it.** The two sets
+  are merged and de-duplicated by advisory identifier, so an outage can make the
+  review less complete but never less complete than an offline run.
+- **A lookup failure is not a review failure.** The timeout, a 5xx, a blocked
+  proxy, a malformed response — each falls back to the snapshot. What it does
+  *not* do is stay quiet about it: the pull-request comment says the check was
+  degraded and why, because "no dependency findings" would otherwise be read as
+  a clean bill of health it did not earn.
+- **Every advisory is its own finding.** Four advisories against one pinned
+  version are four rows, each with its own identifier, severity and fixed
+  version, rather than one row that happens to mention the worst.
+
+### What leaves your network
+
+Ecosystem, package name and declared version range, for the dependencies in the
+changed manifests. Not source, not the diff, not the repository name — the same
+metadata `npm audit` and Dependabot already send, and the version is included
+in the query precisely so the *database* decides affectedness rather than a
+range parser here.
+
+That is still a third party learning something about a private repository's
+dependency tree. Set `ADVISORY_LOOKUP=false` to use the snapshot alone, pass
+`--offline` for a single CLI run, or point `ADVISORY_BASE_URL` at an internal
+mirror.
 
 ## License
 

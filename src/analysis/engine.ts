@@ -1,3 +1,6 @@
+import { lowestSatisfyingVersion } from './advisories';
+import { clearInjectedAdvisories, parseManifest, setInjectedAdvisories } from './rules/dependencies';
+import { lookupAdvisories, type AdvisoryIndex, type OsvOptions, type OsvQuery } from './osv';
 import { detectLanguage, isGeneratedPath, isLockfile, isSuppressed, isTestPath } from './source';
 import { authenticationRule } from './rules/authentication';
 import { authorizationRule } from './rules/authorization';
@@ -36,6 +39,12 @@ export interface EngineOptions {
   maxFindingsPerFile?: number;
   /** Whether to scan paths that look like tests and fixtures. */
   includeTests?: boolean;
+  /**
+   * Advisories from a live source, merged with the bundled snapshot. Gathered by
+   * `scanWithAdvisories`, which does the asynchronous lookup so the rules
+   * themselves stay synchronous.
+   */
+  advisories?: AdvisoryIndex;
 }
 
 const DEFAULT_MAX_PER_FILE = 25;
@@ -62,6 +71,8 @@ export function buildTarget(input: FileInput): ScanTarget {
 /** Runs every enabled rule over every file and returns a ranked, deduplicated set. */
 export function scan(files: FileInput[], options: EngineOptions = {}): ScanSummary {
   const startedAt = Date.now();
+  if (options.advisories) setInjectedAdvisories(options.advisories);
+  else clearInjectedAdvisories();
   const maxPerFile = options.maxFindingsPerFile ?? DEFAULT_MAX_PER_FILE;
   const minRank = options.minSeverity ? SEVERITY_RANK[options.minSeverity] : SEVERITY_RANK.info;
   const rules = selectRules(options);
@@ -144,6 +155,67 @@ export function rank(findings: Finding[]): Finding[] {
     if (byPath !== 0) return byPath;
     return a.line - b.line;
   });
+}
+
+/**
+ * Every dependency the given files declare, as advisory queries.
+ *
+ * Only dependencies with a resolvable concrete version are included: a query
+ * needs a version for the source to answer "is this affected", and a range with
+ * no floor cannot supply one. The floor of the range is used, matching what the
+ * bundled check does - it is the version an install is permitted to resolve to,
+ * so it is the version worth asking about.
+ */
+export function collectAdvisoryQueries(files: FileInput[]): OsvQuery[] {
+  const queries: OsvQuery[] = [];
+  for (const input of files) {
+    if (input.status === 'removed') continue;
+    const target = buildTarget(input);
+    for (const dependency of parseManifest(target)) {
+      const version = lowestSatisfyingVersion(dependency.range);
+      if (!version) continue;
+      queries.push({ ecosystem: dependency.ecosystem, name: dependency.name, version });
+    }
+  }
+  return queries;
+}
+
+export interface ScanWithAdvisoriesResult extends ScanSummary {
+  /** How many live advisories were found, and whether the lookup worked. */
+  advisoryLookup?: { found: number; cached: number; error?: string; durationMs: number };
+}
+
+/**
+ * Scans with live advisory data where it is available.
+ *
+ * The lookup happens once, before any rule runs, so the analyzers stay
+ * synchronous and cannot each reach the network. A lookup failure is not a scan
+ * failure: the bundled snapshot always applies, so the result is never worse
+ * than an offline run.
+ */
+export async function scanWithAdvisories(
+  files: FileInput[],
+  options: EngineOptions = {},
+  osvOptions?: Partial<OsvOptions> & { enabled?: boolean },
+): Promise<ScanWithAdvisoriesResult> {
+  if (osvOptions?.enabled === false) return scan(files, options);
+
+  const queries = collectAdvisoryQueries(files);
+  if (queries.length === 0) return scan(files, options);
+
+  const { DEFAULT_OSV_OPTIONS } = await import('./osv');
+  const lookup = await lookupAdvisories(queries, { ...DEFAULT_OSV_OPTIONS, ...osvOptions });
+
+  const summary = scan(files, { ...options, advisories: lookup.index });
+  return {
+    ...summary,
+    advisoryLookup: {
+      found: lookup.found,
+      cached: lookup.cached,
+      ...(lookup.error ? { error: lookup.error } : {}),
+      durationMs: lookup.durationMs,
+    },
+  };
 }
 
 /** Highest severity present, or `null` for a clean scan. */

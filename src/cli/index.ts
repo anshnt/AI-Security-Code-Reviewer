@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from 'node:fs';
-import { scan } from '../analysis/engine';
+import { scanWithAdvisories } from '../analysis/engine';
 import type { ScanSummary } from '../analysis/types';
 import { CONFIG_PATHS, emptyRepoConfig, parseRepoConfig, type RepoConfig } from '../config/repo-config';
 import { HELP_TEXT, parseArgs, type CliOptions } from './args';
@@ -34,7 +34,7 @@ const EXIT_ERROR = 2;
 
 const MAX_FILE_BYTES = 400_000;
 
-export function run(argv: readonly string[]): number {
+export async function run(argv: readonly string[]): Promise<number> {
   const parsed = parseArgs(argv);
   if (parsed.error || !parsed.options) {
     process.stderr.write(`security-review: ${parsed.error ?? 'could not parse arguments'}\n`);
@@ -68,11 +68,22 @@ export function run(argv: readonly string[]): number {
     return EXIT_ERROR;
   }
 
-  const summary = scan(collected.files, {
-    minSeverity: repoConfig.minSeverity ?? options.minSeverity,
-    includeTests: repoConfig.includeTests ?? options.includeTests,
-    disabledRules: [...options.disabledRules, ...repoConfig.disabledRules],
-  });
+  const summary = await scanWithAdvisories(
+    collected.files,
+    {
+      minSeverity: repoConfig.minSeverity ?? options.minSeverity,
+      includeTests: repoConfig.includeTests ?? options.includeTests,
+      disabledRules: [...options.disabledRules, ...repoConfig.disabledRules],
+    },
+    { enabled: options.advisoryLookup },
+  );
+
+  if (summary.advisoryLookup?.error && !options.quiet) {
+    process.stderr.write(
+      `security-review: advisory lookup unavailable (${summary.advisoryLookup.error}); ` +
+        'using the bundled snapshot only.\n',
+    );
+  }
 
   const rescored = applyOverrides(summary, repoConfig);
   const failOn = repoConfig.failOnSeverity ?? options.failOn;
@@ -191,5 +202,7 @@ function readVersion(): string {
 // Only act as a program when invoked as one, so the module stays importable by
 // the tests without exiting the process.
 if (require.main === module) {
-  process.exitCode = run(process.argv.slice(2));
+  void run(process.argv.slice(2)).then((code) => {
+    process.exitCode = code;
+  });
 }

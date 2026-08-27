@@ -41,6 +41,18 @@ export interface AppConfig {
     inlineMinSeverity: Severity;
     /** Upload a SARIF run to code scanning, putting findings in the Security tab. */
     codeScanningUpload: boolean;
+    /**
+     * Query a live advisory database for the versions a pull request declares,
+     * in addition to the bundled snapshot.
+     *
+     * This sends package names and versions to a third party. That is metadata
+     * rather than source, and it is what `npm audit` and Dependabot already do -
+     * but a deployment reviewing private repositories should decide knowingly,
+     * so it is documented and switchable.
+     */
+    advisoryLookup: boolean;
+    advisoryBaseUrl: string;
+    advisoryTimeoutMs: number;
   };
   ai: AiConfig;
 }
@@ -134,6 +146,9 @@ export function loadConfig(): AppConfig {
       maxInlineComments: readInt('MAX_INLINE_COMMENTS', 15),
       inlineMinSeverity: readSeverity('INLINE_MIN_SEVERITY', 'medium'),
       codeScanningUpload: readBool('CODE_SCANNING_UPLOAD', true),
+      advisoryLookup: readBool('ADVISORY_LOOKUP', true),
+      advisoryBaseUrl: process.env.ADVISORY_BASE_URL ?? 'https://api.osv.dev',
+      advisoryTimeoutMs: readInt('ADVISORY_TIMEOUT_MS', 8_000),
     },
   };
 }
