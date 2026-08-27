@@ -66,6 +66,13 @@ export interface CommentOptions {
    * Files Changed tab rather than repeating everything here.
    */
   inlineCommentCount?: number;
+  /**
+   * Problems found in the repository's own config file. Surfaced in the comment
+   * rather than only in the service log, because the person who can fix a typo
+   * in `.securityreview.yml` is the one reading the pull request, not the one
+   * reading the server's stdout.
+   */
+  configWarnings?: string[];
 }
 
 export function renderComment(findings: TriagedFinding[], options: CommentOptions): string {
@@ -93,6 +100,7 @@ export function renderComment(findings: TriagedFinding[], options: CommentOption
       );
     }
     if (refuted.length > 0) parts.push('', renderRefuted(refuted));
+    if (options.configWarnings?.length) parts.push('', renderConfigWarnings(options.configWarnings));
     parts.push('', footer(options));
     return parts.join('\n');
   }
@@ -172,6 +180,7 @@ export function renderComment(findings: TriagedFinding[], options: CommentOption
   }
 
   if (refuted.length > 0) parts.push(renderRefuted(refuted), '');
+  if (options.configWarnings?.length) parts.push(renderConfigWarnings(options.configWarnings), '');
 
   parts.push(footer(options));
   return parts.join('\n');
@@ -203,6 +212,27 @@ function renderRefuted(findings: TriagedFinding[]): string {
     );
   }
   lines.push('</details>');
+  return lines.join('\n');
+}
+
+/**
+ * Config problems, stated plainly. A typo that silently disables a rule is a
+ * security hole with a friendly face, so these are not collapsed away.
+ */
+function renderConfigWarnings(warnings: string[]): string {
+  const lines: string[] = [
+    `> **${warnings.length} problem${warnings.length === 1 ? '' : 's'} in the security review configuration**`,
+    '>',
+  ];
+  for (const warning of warnings.slice(0, 10)) {
+    lines.push(`> - ${warning}`);
+  }
+  if (warnings.length > 10) lines.push(`> - and ${warnings.length - 10} more.`);
+  lines.push(
+    '>',
+    '> Settings that could not be read are ignored, so the review ran with the defaults for those. ' +
+      'The file is read from the base branch, so a fix has to be merged before it takes effect.',
+  );
   return lines.join('\n');
 }
 

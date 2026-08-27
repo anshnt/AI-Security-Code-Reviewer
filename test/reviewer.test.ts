@@ -29,7 +29,15 @@ class StubClient {
     return this.files;
   }
 
-  async fileContent(_o: string, _r: string, path: string): Promise<string | null> {
+  /** Content keyed by `ref:path`, consulted before the ref-agnostic map. */
+  contentsByRef: Record<string, string | null> = {};
+  /** Every (ref, path) the reviewer asked for, so tests can assert on the ref. */
+  fetched: { ref: string; path: string }[] = [];
+
+  async fileContent(_o: string, _r: string, path: string, ref: string): Promise<string | null> {
+    this.fetched.push({ ref, path });
+    const keyed = `${ref}:${path}`;
+    if (keyed in this.contentsByRef) return this.contentsByRef[keyed]!;
     return this.contents[path] ?? null;
   }
 
@@ -391,5 +399,149 @@ describe('inline review comments', () => {
 
     expect(client.reviewComments).toHaveLength(1);
     expect(outcome.inlineComments).toBe(1);
+  });
+});
+
+describe('repository configuration', () => {
+  let store: ReviewStore;
+  const BASE = 'b'.repeat(40);
+  const HEAD = 'a'.repeat(40);
+
+  beforeEach(() => {
+    store = new ReviewStore(':memory:');
+  });
+
+  function withConfig(configYaml: string | null, ref: string = BASE): StubClient {
+    const client = new StubClient(INFO, [FILE], { 'src/users.ts': VULNERABLE });
+    if (configYaml !== null) {
+      client.contentsByRef[`${ref}:.securityreview.yml`] = configYaml;
+    }
+    return client;
+  }
+
+  it('reads the config from the base branch', async () => {
+    const client = withConfig('rules:\n  disable: [sql-injection]\n');
+    const outcome = await new PullRequestReviewer(
+      client as unknown as GitHubClient,
+      store,
+      config(),
+    ).review({ owner: 'acme', repo: 'app', pullNumber: 7 });
+
+    const configFetches = client.fetched.filter((entry) => entry.path.includes('securityreview'));
+    expect(configFetches.length).toBeGreaterThan(0);
+    expect(configFetches.every((entry) => entry.ref === BASE)).toBe(true);
+    expect(outcome.findings.some((f) => f.category === 'sql-injection')).toBe(false);
+  });
+
+  it('ignores a config file that exists only on the pull request head', async () => {
+    // This is the attack the base-branch rule exists to stop: a pull request
+    // that disables the analyzer in the same commit that adds the problem.
+    const client = withConfig('rules:\n  disable: [sql-injection, secrets]\n', HEAD);
+    const outcome = await new PullRequestReviewer(
+      client as unknown as GitHubClient,
+      store,
+      config(),
+    ).review({ owner: 'acme', repo: 'app', pullNumber: 7 });
+
+    expect(outcome.findings.some((f) => f.category === 'sql-injection')).toBe(true);
+    expect(outcome.status).toBe('failure');
+  });
+
+  it('excludes paths the config lists', async () => {
+    const client = withConfig('paths:\n  exclude: ["src/**"]\n');
+    const outcome = await new PullRequestReviewer(
+      client as unknown as GitHubClient,
+      store,
+      config(),
+    ).review({ owner: 'acme', repo: 'app', pullNumber: 7 });
+
+    expect(outcome.findings).toEqual([]);
+    expect(outcome.status).toBe('success');
+  });
+
+  it('applies a per-rule severity override', async () => {
+    const client = withConfig(
+      'severity:\n  overrides:\n    sql-injection/interpolated-query: low\n',
+    );
+    const outcome = await new PullRequestReviewer(
+      client as unknown as GitHubClient,
+      store,
+      config({ failOnSeverity: 'high' }),
+    ).review({ owner: 'acme', repo: 'app', pullNumber: 7 });
+
+    const sql = outcome.findings.find((f) => f.ruleId === 'sql-injection/interpolated-query')!;
+    expect(sql.severity).toBe('low');
+  });
+
+  it('lets the config tighten the merge gate', async () => {
+    const client = withConfig('severity:\n  fail-on: low\n');
+    const outcome = await new PullRequestReviewer(
+      client as unknown as GitHubClient,
+      store,
+      config({ failOnSeverity: 'critical' }),
+    ).review({ owner: 'acme', repo: 'app', pullNumber: 7 });
+    expect(outcome.status).toBe('failure');
+    expect(outcome.configWarnings).toBeUndefined();
+  });
+
+  it('refuses to let the config remove the merge gate, and says so in the comment', async () => {
+    const client = withConfig('severity:\n  fail-on: never\n');
+    const outcome = await new PullRequestReviewer(
+      client as unknown as GitHubClient,
+      store,
+      config({ failOnSeverity: 'high' }),
+    ).review({ owner: 'acme', repo: 'app', pullNumber: 7 });
+
+    expect(outcome.status).toBe('failure');
+    expect(outcome.configWarnings?.join(' ')).toContain('cannot be looser');
+    expect(client.comments[0]!.body).toContain('problem in the security review configuration');
+  });
+
+  it('reports a config typo in the comment rather than swallowing it', async () => {
+    const client = withConfig('rulez:\n  disable: [secrets]\n');
+    const outcome = await new PullRequestReviewer(
+      client as unknown as GitHubClient,
+      store,
+      config(),
+    ).review({ owner: 'acme', repo: 'app', pullNumber: 7 });
+
+    expect(outcome.configWarnings?.join(' ')).toContain('unknown setting "rulez"');
+    expect(client.comments[0]!.body).toContain('unknown setting');
+  });
+
+  it('reports invalid YAML and reviews with the defaults', async () => {
+    const client = withConfig('paths:\n  exclude: [oops\n');
+    const outcome = await new PullRequestReviewer(
+      client as unknown as GitHubClient,
+      store,
+      config(),
+    ).review({ owner: 'acme', repo: 'app', pullNumber: 7 });
+
+    expect(outcome.configWarnings?.join(' ')).toContain('not valid YAML');
+    expect(outcome.findings.length).toBeGreaterThan(0);
+  });
+
+  it('reviews normally when there is no config file', async () => {
+    const client = withConfig(null);
+    const outcome = await new PullRequestReviewer(
+      client as unknown as GitHubClient,
+      store,
+      config(),
+    ).review({ owner: 'acme', repo: 'app', pullNumber: 7 });
+
+    expect(outcome.configWarnings).toBeUndefined();
+    expect(outcome.findings.length).toBeGreaterThan(0);
+  });
+
+  it('honours an inline setting from the config', async () => {
+    const client = withConfig('inline:\n  enabled: false\n');
+    const outcome = await new PullRequestReviewer(
+      client as unknown as GitHubClient,
+      store,
+      config({ inlineComments: true }),
+    ).review({ owner: 'acme', repo: 'app', pullNumber: 7 });
+
+    expect(client.reviewComments).toHaveLength(0);
+    expect(outcome.inlineComments).toBe(0);
   });
 });

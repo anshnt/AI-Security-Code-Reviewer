@@ -3,6 +3,8 @@ import { buildTarget, scan, type FileInput } from '../analysis/engine';
 import { SEVERITY_RANK, type Finding, type ScanTarget, type Severity } from '../analysis/types';
 import { triage, type TriagedFinding } from '../ai/triage';
 import type { AppConfig } from '../config';
+import { mergeRepoConfig } from '../config/merge';
+import { CONFIG_PATHS, emptyRepoConfig, parseRepoConfig, pathInScope, type RepoConfig } from '../config/repo-config';
 import type { ReviewStore } from '../storage/database';
 import { logger } from '../util/logger';
 import { COMMENT_MARKER, renderComment, renderStatusDescription, type TriageSummary } from './comment';
@@ -36,6 +38,8 @@ export interface ReviewOutcome {
   refuted?: number;
   /** How many findings were anchored to their line in the diff. */
   inlineComments?: number;
+  /** Problems found in the repository's own config file. */
+  configWarnings?: string[];
 }
 
 export class PullRequestReviewer {
@@ -58,10 +62,22 @@ export class PullRequestReviewer {
       changedFiles: pullRequest.changedFiles,
     });
 
-    if (pullRequest.changedFiles > this.config.review.maxFilesPerPullRequest) {
+    // The repository's own settings, read from the base branch. See
+    // `repo-config.ts` for why the head is never trusted for this.
+    const repoConfig = await this.loadRepoConfig(owner, repo, pullRequest.baseSha);
+    const merged = mergeRepoConfig(this.config, repoConfig);
+    const config = merged.config;
+    if (merged.warnings.length > 0) {
+      logger.warn('repository config warnings', {
+        repository: repositoryFullName,
+        warnings: merged.warnings,
+      });
+    }
+
+    if (pullRequest.changedFiles > config.review.maxFilesPerPullRequest) {
       const reason =
         `pull request touches ${pullRequest.changedFiles} files, above the ` +
-        `${this.config.review.maxFilesPerPullRequest}-file limit`;
+        `${config.review.maxFilesPerPullRequest}-file limit`;
       await this.client.setCommitStatus(
         owner,
         repo,
@@ -93,19 +109,25 @@ export class PullRequestReviewer {
 
     const files = await this.client.pullRequestFiles(owner, repo, pullNumber);
     const commentableLines = collectCommentableLines(files);
-    const inputs = await this.buildInputs(owner, repo, pullRequest.headSha, files);
+    const inputs = (await this.buildInputs(owner, repo, pullRequest.headSha, files, config)).filter(
+      (input) => pathInScope(repoConfig, input.filePath),
+    );
 
     const summary = scan(inputs, {
-      minSeverity: this.config.review.minSeverity,
-      maxFindingsPerFile: this.config.review.maxFindingsPerFile,
-      includeTests: this.config.review.includeTests,
-      disabledRules: this.config.review.disabledRules,
+      minSeverity: config.review.minSeverity,
+      maxFindingsPerFile: config.review.maxFindingsPerFile,
+      includeTests: config.review.includeTests,
+      disabledRules: config.review.disabledRules,
     });
+
+    // Per-rule severity replacement happens after the analyzers run, so a rule
+    // can be downgraded without being silenced.
+    const rescored = applySeverityOverrides(summary.findings, repoConfig);
 
     // Model-assisted triage refines what the analyzers found. It runs after the
     // deterministic pass and can never take its place: any failure here leaves
     // the findings exactly as the analyzers produced them.
-    const reviewed = await this.applyTriage(summary.findings, inputs);
+    const reviewed = await this.applyTriage(rescored, inputs, config);
 
     const previouslyOpen = this.store.openFingerprints(repositoryFullName);
 
@@ -139,11 +161,12 @@ export class PullRequestReviewer {
         durationMs: summary.durationMs,
         newFingerprints,
         resolvedCount: record.resolvedFingerprints.length,
-        maxRendered: this.config.review.maxFindingsPerComment,
-        dashboardUrl: this.config.publicUrl,
-        failOnSeverity: this.config.review.failOnSeverity,
+        maxRendered: config.review.maxFindingsPerComment,
+        dashboardUrl: config.publicUrl,
+        failOnSeverity: config.review.failOnSeverity,
         triage: reviewed.summary,
         inlineCommentCount: inlineCount,
+        configWarnings: merged.warnings,
       });
 
     // Inline comments first: the summary then knows what it still has to carry.
@@ -154,6 +177,7 @@ export class PullRequestReviewer {
       pullRequest.headSha,
       reviewed.findings,
       commentableLines,
+      config,
     );
 
     const comment = await this.client.upsertComment(
@@ -164,14 +188,14 @@ export class PullRequestReviewer {
       bodyFor(inline),
     );
 
-    const blocking = this.blockingCount(reviewed.findings);
+    const blocking = this.blockingCount(reviewed.findings, config);
     const status: 'success' | 'failure' = blocking > 0 ? 'failure' : 'success';
     await this.client.setCommitStatus(
       owner,
       repo,
       pullRequest.headSha,
       status,
-      renderStatusDescription(reviewed.findings, this.config.review.failOnSeverity),
+      renderStatusDescription(reviewed.findings, config.review.failOnSeverity),
       this.dashboardUrl(repositoryFullName),
     );
 
@@ -198,7 +222,38 @@ export class PullRequestReviewer {
         ? { triaged: reviewed.summary.triagedCount, refuted: reviewed.summary.refutedCount }
         : {}),
       inlineComments: inline,
+      ...(merged.warnings.length > 0 ? { configWarnings: merged.warnings } : {}),
     };
+  }
+
+  /**
+   * Reads the repository's config file from the base branch.
+   *
+   * Deliberately the base and not the head: a config file on the head is
+   * proposed, not agreed. Reading it would let a pull request disable the
+   * analyzer that is about to review it - `rules: { disable: [secrets] }` in the
+   * same commit that adds the credential. Requiring a merge means requiring a
+   * review, which is the whole point of the mechanism.
+   */
+  private async loadRepoConfig(owner: string, repo: string, baseRef: string): Promise<RepoConfig> {
+    for (const path of CONFIG_PATHS) {
+      let text: string | null;
+      try {
+        text = await this.client.fileContent(owner, repo, path, baseRef, 64_000);
+      } catch (error) {
+        logger.warn('could not read repository config', { path, error: (error as Error).message });
+        return emptyRepoConfig();
+      }
+      if (text === null) continue;
+      const parsed = parseRepoConfig(text, path);
+      logger.info('loaded repository config', {
+        path,
+        warnings: parsed.warnings.length,
+        disabledRules: parsed.disabledRules.length,
+      });
+      return parsed;
+    }
+    return emptyRepoConfig();
   }
 
   /**
@@ -215,17 +270,18 @@ export class PullRequestReviewer {
     headSha: string,
     findings: TriagedFinding[],
     commentableLines: Map<string, Set<number>>,
+    config: AppConfig,
   ): Promise<number> {
-    if (!this.config.review.inlineComments || findings.length === 0) return 0;
+    if (!config.review.inlineComments || findings.length === 0) return 0;
 
     try {
       const existing = await this.client.listReviewComments(owner, repo, pullNumber);
       const plan = planInlineComments(findings, {
         commentableLines,
         existingBodies: existing.map((comment) => comment.body),
-        maxComments: this.config.review.maxInlineComments,
-        minSeverity: this.config.review.inlineMinSeverity,
-        ...(this.config.publicUrl ? { dashboardUrl: this.config.publicUrl } : {}),
+        maxComments: config.review.maxInlineComments,
+        minSeverity: config.review.inlineMinSeverity,
+        ...(config.publicUrl ? { dashboardUrl: config.publicUrl } : {}),
         repositoryFullName: `${owner}/${repo}`,
       });
 
@@ -270,8 +326,9 @@ export class PullRequestReviewer {
   private async applyTriage(
     findings: Finding[],
     inputs: FileInput[],
+    config: AppConfig,
   ): Promise<{ findings: TriagedFinding[]; summary?: TriageSummary }> {
-    const ai = this.config.ai;
+    const ai = config.ai;
     if (!ai.enabled || findings.length === 0) return { findings };
 
     const targets = new Map<string, ScanTarget>();
@@ -323,6 +380,7 @@ export class PullRequestReviewer {
     repo: string,
     headSha: string,
     files: PullRequestFile[],
+    config: AppConfig,
   ): Promise<FileInput[]> {
     const inputs: FileInput[] = [];
 
@@ -337,7 +395,7 @@ export class PullRequestReviewer {
         repo,
         file.filename,
         headSha,
-        this.config.review.maxFileBytes,
+        config.review.maxFileBytes,
       );
       if (content === null) {
         content = reconstructFromPatch(parsed);
@@ -363,8 +421,8 @@ export class PullRequestReviewer {
    * can disagree, but holding up a merge on a judgement the tool itself
    * believes is wrong would train people to ignore the check.
    */
-  private blockingCount(findings: TriagedFinding[]): number {
-    const failOn = this.config.review.failOnSeverity;
+  private blockingCount(findings: TriagedFinding[], config: AppConfig): number {
+    const failOn = config.review.failOnSeverity;
     if (failOn === 'never') return 0;
     return findings.filter(
       (finding) =>
@@ -386,6 +444,23 @@ export class PullRequestReviewer {
  * is exactly what the diff parser already records positions for. Deletions are
  * not, since they no longer exist on the right-hand side.
  */
+/**
+ * Applies the repository's per-rule severity replacements.
+ *
+ * Separate from disabling a rule on purpose: "this rule matters less here" and
+ * "this rule is wrong here" are different statements, and collapsing them into
+ * one switch means teams silence rules they only wanted to de-prioritise.
+ */
+function applySeverityOverrides(findings: Finding[], repoConfig: RepoConfig): Finding[] {
+  if (repoConfig.severityOverrides.size === 0) return findings;
+  return findings.map((finding) => {
+    const override =
+      repoConfig.severityOverrides.get(finding.ruleId) ??
+      repoConfig.severityOverrides.get(finding.category);
+    return override ? { ...finding, severity: override } : finding;
+  });
+}
+
 function collectCommentableLines(files: PullRequestFile[]): Map<string, Set<number>> {
   const out = new Map<string, Set<number>>();
   for (const file of files) {
